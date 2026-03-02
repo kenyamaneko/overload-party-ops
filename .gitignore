@@ -1,0 +1,14 @@
+# AI assistant configs
+.claude/
+.gemini/
+.aider*
+
+# Build artifacts
+db-migrate/sql/
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/

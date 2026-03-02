@@ -1,0 +1,106 @@
+name: DB Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - stg
+      server_ref:
+        description: "overload-party-server branch/tag/SHA (default: main)"
+        required: false
+        default: "main"
+      dry_run:
+        description: "Dry-run only (schema diff without applying)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: asia-northeast1
+  REGISTRY: asia-northeast1-docker.pkg.dev
+  AR_PROJECT: overload-party-shared
+  AR_REPOSITORY: overload-party
+  IMAGE_NAME: db-migrate
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Set project ID
+        id: config
+        run: |
+          case "${{ inputs.environment }}" in
+            dev)  echo "project=overload-party-dev" >> "$GITHUB_OUTPUT" ;;
+            stg)  echo "project=overload-party-stg" >> "$GITHUB_OUTPUT" ;;
+            *)    echo "Unsupported environment"; exit 1 ;;
+          esac
+
+      - name: Checkout ops repo
+        uses: actions/checkout@v4
+
+      - name: Checkout server repo (SQL files only)
+        uses: actions/checkout@v4
+        with:
+          repository: kenyamaneko/overload-party-server
+          ref: ${{ inputs.server_ref }}
+          path: server
+          sparse-checkout: db/
+
+      - name: Copy SQL files into build context
+        run: |
+          mkdir -p db-migrate/sql
+          cp server/db/schema_postgres.sql db-migrate/sql/
+          cp server/db/grant_iam.sql db-migrate/sql/
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.CI_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build and push migration image
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}
+          docker build \
+            -t ${IMAGE}:${{ github.sha }} \
+            -t ${IMAGE}:latest \
+            db-migrate/
+          docker push ${IMAGE}:${{ github.sha }}
+          docker push ${IMAGE}:latest
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Update Cloud Run Job image
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          gcloud run jobs update db-migrate \
+            --region ${{ env.REGION }} \
+            --project ${{ steps.config.outputs.project }} \
+            --image "${IMAGE}"
+
+      - name: Execute migration job
+        if: ${{ !inputs.dry_run }}
+        run: |
+          gcloud run jobs execute db-migrate \
+            --region ${{ env.REGION }} \
+            --project ${{ steps.config.outputs.project }} \
+            --wait
+
+      - name: Dry-run notice
+        if: ${{ inputs.dry_run }}
+        run: echo "Dry-run mode — image updated but job was NOT executed."
