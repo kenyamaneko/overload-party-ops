@@ -49,6 +49,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: kenyamaneko/overload-party-common
+          token: ${{ secrets.COMMON_REPO_TOKEN }}
           path: common
           sparse-checkout: db/
 
