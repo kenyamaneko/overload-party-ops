@@ -2,6 +2,7 @@
 .claude/
 .gemini/
 .aider*
+CLAUDE.md
 
 # Build artifacts
 db-migrate/sql/

@@ -1,20 +1,10 @@
-name: DB Migration
+# common リポの main push 時に repository_dispatch で呼ばれる。
+# dev 環境に対して自動マイグレーションを実行する。
+name: DB Migration (auto)
 
 on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: "Target environment"
-        required: true
-        type: choice
-        options:
-          - dev
-          - stg
-      dry_run:
-        description: "Dry-run only (schema diff without applying)"
-        required: false
-        type: boolean
-        default: false
+  repository_dispatch:
+    types: [db-migrate]
 
 permissions:
   contents: read
@@ -30,18 +20,9 @@ env:
 jobs:
   migrate:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: dev
 
     steps:
-      - name: Set project ID
-        id: config
-        run: |
-          case "${{ inputs.environment }}" in
-            dev)  echo "project=overload-party-dev" >> "$GITHUB_OUTPUT" ;;
-            stg)  echo "project=overload-party-stg" >> "$GITHUB_OUTPUT" ;;
-            *)    echo "Unsupported environment"; exit 1 ;;
-          esac
-
       - name: Checkout ops repo
         uses: actions/checkout@v4
 
@@ -49,6 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: kenyamaneko/overload-party-common
+          ref: ${{ github.event.client_payload.sha || 'main' }}
           path: common
           sparse-checkout: db/
 
@@ -73,22 +55,23 @@ jobs:
       - name: Build and push migration image
         run: |
           IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}
+          SHA=${{ github.event.client_payload.sha || github.sha }}
           docker build \
-            -t ${IMAGE}:${{ github.sha }} \
+            -t ${IMAGE}:${SHA} \
             -t ${IMAGE}:latest \
             db-migrate/
-          docker push ${IMAGE}:${{ github.sha }}
+          docker push ${IMAGE}:${SHA}
           docker push ${IMAGE}:latest
 
       - name: Ensure Cloud SQL instance is running
         run: |
           gcloud sql instances patch ${{ secrets.CLOUDSQL_INSTANCE_NAME }} \
-            --project=${{ steps.config.outputs.project }} \
+            --project=overload-party-dev \
             --activation-policy=ALWAYS --quiet
           echo "Waiting for instance to become RUNNABLE..."
           for i in $(seq 1 60); do
             STATE=$(gcloud sql instances describe ${{ secrets.CLOUDSQL_INSTANCE_NAME }} \
-              --project=${{ steps.config.outputs.project }} --format='value(state)')
+              --project=overload-party-dev --format='value(state)')
             if [ "$STATE" = "RUNNABLE" ]; then
               echo "Instance is RUNNABLE (attempt ${i})"
               break
@@ -102,22 +85,18 @@ jobs:
 
       - name: Update Cloud Run Job image
         run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          SHA=${{ github.event.client_payload.sha || github.sha }}
+          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${SHA}
           gcloud run jobs update db-migrate \
             --region ${{ env.REGION }} \
-            --project ${{ steps.config.outputs.project }} \
+            --project overload-party-dev \
             --image "${IMAGE}" \
             --quiet
 
       - name: Execute migration job
-        if: ${{ !inputs.dry_run }}
         run: |
           gcloud run jobs execute db-migrate \
             --region ${{ env.REGION }} \
-            --project ${{ steps.config.outputs.project }} \
+            --project overload-party-dev \
             --wait \
             --quiet
-
-      - name: Dry-run notice
-        if: ${{ inputs.dry_run }}
-        run: echo "Dry-run mode — image updated but job was NOT executed."
