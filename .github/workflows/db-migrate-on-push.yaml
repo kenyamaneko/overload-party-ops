@@ -13,7 +13,7 @@ permissions:
 env:
   REGION: asia-northeast1
   REGISTRY: asia-northeast1-docker.pkg.dev
-  AR_PROJECT: overload-party-shared
+  AR_PROJECT: keyandnotes-platform
   AR_REPOSITORY: overload-party
   IMAGE_NAME: db-migrate
 
