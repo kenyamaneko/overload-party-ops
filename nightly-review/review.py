@@ -70,6 +70,8 @@ def issue_exists(repo: str, search_key: str) -> bool:
     return output.isdigit() and int(output) > 0
 
 
+# TODO: 現在は main ブランチのみ対象。ブランチ管理が整ったら
+#       オープンな PR やフィーチャーブランチも差分レビュー対象にする。
 def get_diff(repo: str, since: str) -> str | None:
     commits_json = gh(
         "api", f"repos/{GITHUB_ORG}/{repo}/commits?sha=main&since={since}",
@@ -128,7 +130,10 @@ def review_full(repo: str) -> str | None:
     if os.path.exists(clone_dir):
         shutil.rmtree(clone_dir)
 
-    token = os.environ["GITHUB_TOKEN"]
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        print(f"  Error: GITHUB_TOKEN is not set", file=sys.stderr)
+        return None
     clone_url = f"https://x-access-token:{token}@github.com/{GITHUB_ORG}/{repo}.git"
 
     result = subprocess.run(
@@ -145,7 +150,7 @@ def review_full(repo: str) -> str | None:
         shutil.rmtree(clone_dir, ignore_errors=True)
 
 
-def create_issue(repo: str, title: str, label: str, body: str) -> None:
+def create_issue(repo: str, title: str, label: str, body: str) -> bool:
     result = subprocess.run(
         ["gh", "issue", "create",
          "--repo", f"{GITHUB_ORG}/{repo}",
@@ -156,8 +161,9 @@ def create_issue(repo: str, title: str, label: str, body: str) -> None:
     )
     if result.returncode != 0:
         print(f"  Error: failed to create issue: {result.stderr.strip()}")
-    else:
-        print(f"  Created: {result.stdout.strip()}")
+        return False
+    print(f"  Created: {result.stdout.strip()}")
+    return True
 
 
 def main() -> None:
@@ -194,7 +200,8 @@ def main() -> None:
         if body is None:
             continue
 
-        create_issue(repo, title, label, body)
+        if not create_issue(repo, title, label, body):
+            has_error = True
 
     print("=== Nightly review complete ===")
     sys.exit(1 if has_error else 0)

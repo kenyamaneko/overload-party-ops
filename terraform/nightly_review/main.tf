@@ -12,6 +12,16 @@ provider "google" {
   region  = var.region
 }
 
+# --- Secrets (枠のみ。バージョンは手動登録) ---
+
+resource "google_secret_manager_secret" "anthropic_api_key" {
+  secret_id = var.anthropic_api_key_secret
+
+  replication {
+    auto {}
+  }
+}
+
 # --- Service Account ---
 
 resource "google_service_account" "nightly_review" {
@@ -20,13 +30,7 @@ resource "google_service_account" "nightly_review" {
 }
 
 resource "google_secret_manager_secret_iam_member" "anthropic_key" {
-  secret_id = var.anthropic_api_key_secret
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.nightly_review.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "github_token" {
-  secret_id = var.github_token_secret
+  secret_id = google_secret_manager_secret.anthropic_api_key.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.nightly_review.email}"
 }
