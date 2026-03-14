@@ -1,5 +1,5 @@
-# common リポの main push 時に repository_dispatch で呼ばれる。
-# dev 環境に対して自動マイグレーションを実行する。
+# 自動トリガー（repository_dispatch）。common リポの main push 時に発火する。
+# dev 環境のみ対象。dry_run なし（常に実行）。
 name: DB Migration (auto)
 
 on:
@@ -40,6 +40,14 @@ jobs:
           mkdir -p db-migrate/sql
           cp common/db/schema_postgres.sql db-migrate/sql/
           cp common/db/grant_iam.sql db-migrate/sql/
+
+      - name: Get previous schema for safety check
+        run: |
+          cd common
+          git show HEAD~1:db/schema_postgres.sql > /tmp/schema_old.sql 2>/dev/null || touch /tmp/schema_old.sql
+
+      - name: Schema safety check
+        run: python3 db-migrate/schema_check.py /tmp/schema_old.sql db-migrate/sql/schema_postgres.sql
 
       - name: Authenticate to Google Cloud
         id: auth
