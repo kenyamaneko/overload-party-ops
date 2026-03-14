@@ -6,8 +6,10 @@ Overload Party の運用ジョブ管理リポジトリ。Cloud Run Jobs で実�
 
 | ジョブ | 説明 | ツール |
 |--------|------|--------|
-| `db-migrate` | Cloud SQL スキーママイグレーション + IAM 権限付与 | psqldef, psql |
+| `db-migrate` | Cloud SQL スキーママイグレーション + IAM 権限付与（破壊的変更の安全チェック付き） | psqldef, psql |
 | `nightly-review` | 毎晩 3:00 (JST) に全リポジトリを自動レビュー → GitHub Issues 起票 | Claude Code, gh |
+| `cost-monitor` | 毎朝 8:00 (JST) に dev/stg のコスト発生リソースをチェック → Slack 通知 | gcloud, kubectl |
+| `drift-monitor` | 毎朝 7:00 (JST) に全リポジトリの Terraform plan を実行し drift 検出 → Slack 通知 | terraform, git |
 
 ## 使い方
 
@@ -49,11 +51,27 @@ overload-party-ops (ここ)                  │
 db-migrate/              # DB マイグレーションジョブ
   Dockerfile             # psqldef + psql イメージ
   entrypoint.sh          # マイグレーション実行スクリプト
+  schema_check.py        # 破壊的変更検出（DROP TABLE/COLUMN）
 nightly-review/          # 夜間自動レビュージョブ
   Dockerfile             # Node.js 22 + Claude Code + gh
   review.py              # メインスクリプト（差分/全体の分岐・Issue 起票）
+cost-monitor/            # 環境コスト監視（Cloud Run Job）
+  Dockerfile             # gcloud SDK + kubectl イメージ
+  check.py               # Cloud SQL, GKE, Ingress, IP, PSC チェック → Slack 通知
+drift-monitor/           # Terraform drift 検出（Cloud Run Job）
+  Dockerfile             # terraform + gcloud SDK + git イメージ
+  check.py               # 全リポの terraform plan → drift 検出 → Slack 通知
 terraform/
+  shared/                # 複数ジョブで共有する Secret（github-token）と IAM
+    main.tf
+    variables.tf
   nightly_review/        # Cloud Run Job + Cloud Scheduler + SA + IAM
+    main.tf
+    variables.tf
+  cost_monitor/          # Cloud Run Job + Cloud Scheduler + SA + IAM
+    main.tf
+    variables.tf
+  drift_monitor/         # Cloud Run Job + Cloud Scheduler + SA + IAM
     main.tf
     variables.tf
 .github/workflows/
