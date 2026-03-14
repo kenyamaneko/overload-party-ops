@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
+
+GITHUB_ORG = "kenyamaneko"
+MAX_DIFF_CHARS = 50000
+
+REPOS = [
+    "overload-party-common",
+    "overload-party-client",
+    "overload-party-battle",
+    "overload-party-gateway",
+    "overload-party-infra",
+    "overload-party-k8s",
+    "overload-party-newsfeed",
+    "overload-party-analytics",
+    "overload-party-ops",
+]
+
+DIFF_PROMPT = (
+    "以下は昨日からの差分です。"
+    "実装不備・バグリスク・未処理のエラー・未実装のTODOを指摘してください。"
+    "問題がなければ「問題なし」と一言だけ返してください。"
+    "Markdown形式で出力してください。"
+)
+
+FULL_PROMPT = (
+    "このリポジトリ全体をレビューしてください。"
+    "実装不備・バグリスク・設計の一貫性・未実装のTODO・デッドコードを確認してください。"
+    "Markdown形式で出力してください。"
+)
+
+
+def gh(*args: str) -> str:
+    result = subprocess.run(
+        ["gh", *args],
+        capture_output=True, text=True,
+    )
+    return result.stdout.strip()
+
+
+def ensure_label(repo: str, label: str) -> None:
+    existing = gh("label", "list", "--repo", f"{GITHUB_ORG}/{repo}", "--search", label)
+    if label not in existing:
+        result = subprocess.run(
+            ["gh", "label", "create", label,
+             "--repo", f"{GITHUB_ORG}/{repo}",
+             "--color", "0e8a16",
+             "--description", "Nightly auto-review"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            print(f"  Warning: failed to create label '{label}': {result.stderr.strip()}")
+
+
+def issue_exists(repo: str, search_key: str) -> bool:
+    output = gh(
+        "issue", "list",
+        "--repo", f"{GITHUB_ORG}/{repo}",
+        "--search", f'in:title "{search_key}"',
+        "--state", "open",
+        "--json", "number",
+        "--jq", "length",
+    )
+    return output.isdigit() and int(output) > 0
+
+
+def get_diff(repo: str, since: str) -> str | None:
+    commits_json = gh(
+        "api", f"repos/{GITHUB_ORG}/{repo}/commits?sha=main&since={since}",
+        "-q", "length",
+    )
+    commit_count = int(commits_json) if commits_json.isdigit() else 0
+    if commit_count == 0:
+        return None
+
+    raw = gh(
+        "api", f"repos/{GITHUB_ORG}/{repo}/compare/main~{commit_count}...main",
+        "--jq", '.files[] | select(.patch != null) | "=== \\(.filename) ===\\n\\(.patch)"',
+    )
+    return raw if raw else None
+
+
+def run_claude(prompt: str, cwd: str | None = None) -> str | None:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        f.write(prompt)
+        f.flush()
+        try:
+            result = subprocess.run(
+                ["claude", "-p", "--allowedTools", "Read,Grep,Glob"],
+                stdin=open(f.name),
+                capture_output=True, text=True,
+                cwd=cwd,
+            )
+        finally:
+            os.unlink(f.name)
+
+    if result.returncode != 0:
+        print(f"  Error: claude exited with code {result.returncode}: {result.stderr.strip()}")
+        return None
+
+    body = result.stdout.strip()
+    return body if body else None
+
+
+def review_diff(repo: str, yesterday: str) -> str | None:
+    since = f"{yesterday}T00:00:00Z"
+    diff = get_diff(repo, since)
+    if diff is None:
+        print(f"  No changes since {yesterday}, skipping.")
+        return None
+
+    truncated = len(diff) >= MAX_DIFF_CHARS
+    diff = diff[:MAX_DIFF_CHARS]
+
+    note = "（注：差分が大きいため一部のみ表示）" if truncated else ""
+    prompt = f"{DIFF_PROMPT}{note}\n\n```diff\n{diff}\n```"
+    return run_claude(prompt)
+
+
+def review_full(repo: str) -> str | None:
+    clone_dir = f"/tmp/{repo}"
+    if os.path.exists(clone_dir):
+        shutil.rmtree(clone_dir)
+
+    token = os.environ["GITHUB_TOKEN"]
+    clone_url = f"https://x-access-token:{token}@github.com/{GITHUB_ORG}/{repo}.git"
+
+    result = subprocess.run(
+        ["git", "clone", "--quiet", clone_url, clone_dir],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"  Error: git clone failed: {result.stderr.strip()}")
+        return None
+
+    try:
+        return run_claude(FULL_PROMPT, cwd=clone_dir)
+    finally:
+        shutil.rmtree(clone_dir, ignore_errors=True)
+
+
+def create_issue(repo: str, title: str, label: str, body: str) -> None:
+    result = subprocess.run(
+        ["gh", "issue", "create",
+         "--repo", f"{GITHUB_ORG}/{repo}",
+         "--title", title,
+         "--label", label,
+         "--body", body],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"  Error: failed to create issue: {result.stderr.strip()}")
+    else:
+        print(f"  Created: {result.stdout.strip()}")
+
+
+def main() -> None:
+    jst = timezone(timedelta(hours=9))
+    today = datetime.now(jst).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(jst) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    review_mode = os.environ.get("REVIEW_MODE", "diff")
+    skip_if_exists = os.environ.get("SKIP_IF_EXISTS", "true") == "true"
+
+    if review_mode == "full":
+        kind, label = "全体", "auto-review-full"
+    else:
+        kind, label = "差分", "auto-review"
+
+    has_error = False
+
+    for repo in REPOS:
+        print(f"=== {repo} ({review_mode}) ===")
+
+        title = f"[自動レビュー {today}] {kind} {repo}"
+
+        if skip_if_exists and issue_exists(repo, f"[自動レビュー {today}] {kind}"):
+            print("  Issue already exists, skipping.")
+            continue
+
+        ensure_label(repo, label)
+
+        if review_mode == "full":
+            body = review_full(repo)
+        else:
+            body = review_diff(repo, yesterday)
+
+        if body is None:
+            continue
+
+        create_issue(repo, title, label, body)
+
+    print("=== Nightly review complete ===")
+    sys.exit(1 if has_error else 0)
+
+
+if __name__ == "__main__":
+    main()
