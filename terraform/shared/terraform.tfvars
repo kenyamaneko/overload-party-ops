@@ -1,0 +1,6 @@
+project_id = "keyandnotes-ops"
+
+github_token_accessors = [
+  "serviceAccount:nightly-review@keyandnotes-ops.iam.gserviceaccount.com",
+  "serviceAccount:drift-monitor@keyandnotes-ops.iam.gserviceaccount.com",
+]
