@@ -13,3 +13,4 @@ db-migrate/sql/
 # IDE
 .idea/
 .vscode/
+.terraform/
