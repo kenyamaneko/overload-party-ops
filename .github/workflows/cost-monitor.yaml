@@ -1,0 +1,16 @@
+name: Cost Monitor
+
+on:
+  push:
+    branches: [main]
+    paths: [cost-monitor/**]
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    uses: ./.github/workflows/build-deploy-job.yaml
+    with:
+      job_dir: cost-monitor
+      image_name: cost-monitor
+      cloud_run_jobs: cost-monitor
+    secrets: inherit

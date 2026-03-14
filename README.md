@@ -75,8 +75,46 @@ terraform/
     main.tf
     variables.tf
 .github/workflows/
-  db-migrate.yaml        # 手動 dispatch: ビルド → push → Cloud Run Job 実行
+  build-deploy-job.yaml    # 共通ビルド・デプロイ (reusable workflow)
+  nightly-review.yaml      # nightly-review のビルド・デプロイ
+  cost-monitor.yaml        # cost-monitor のビルド・デプロイ
+  drift-monitor.yaml       # drift-monitor のビルド・デプロイ
+  db-migrate.yaml          # 手動 dispatch: ビルド → push → Cloud Run Job 実行
   db-migrate-on-push.yaml  # 自動: common の push で dev に適用
+Makefile                   # ローカル開発用コマンド
+```
+
+## CI/CD
+
+各ジョブのディレクトリ配下を変更して main に push すると、自動でイメージビルド → AR push → Cloud Run Job 更新が実行される。
+
+| ジョブ | ワークフロー | トリガー |
+|--------|------------|---------|
+| `db-migrate` | `db-migrate.yaml` | 手動 dispatch / common push（dev 自動） |
+| `nightly-review` | `nightly-review.yaml` | main push (`nightly-review/**`) / 手動 dispatch |
+| `cost-monitor` | `cost-monitor.yaml` | main push (`cost-monitor/**`) / 手動 dispatch |
+| `drift-monitor` | `drift-monitor.yaml` | main push (`drift-monitor/**`) / 手動 dispatch |
+
+## ローカル開発
+
+```bash
+# イメージビルド
+make build-cost-monitor
+
+# ビルド + AR push
+make push-cost-monitor
+
+# ビルド + push + Cloud Run Job 更新（デフォルト: overload-party-dev）
+make deploy-cost-monitor
+
+# stg 環境にデプロイ
+make deploy-cost-monitor PROJECT=overload-party-stg
+
+# 全ジョブビルド
+make build-all
+
+# コマンド一覧
+make help
 ```
 
 ## 関連リポジトリ

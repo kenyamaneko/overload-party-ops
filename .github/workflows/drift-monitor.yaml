@@ -1,0 +1,16 @@
+name: Drift Monitor
+
+on:
+  push:
+    branches: [main]
+    paths: [drift-monitor/**]
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    uses: ./.github/workflows/build-deploy-job.yaml
+    with:
+      job_dir: drift-monitor
+      image_name: drift-monitor
+      cloud_run_jobs: drift-monitor
+    secrets: inherit

@@ -1,0 +1,16 @@
+name: Nightly Review
+
+on:
+  push:
+    branches: [main]
+    paths: [nightly-review/**]
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    uses: ./.github/workflows/build-deploy-job.yaml
+    with:
+      job_dir: nightly-review
+      image_name: nightly-review
+      cloud_run_jobs: nightly-review-diff,nightly-review-full
+    secrets: inherit
