@@ -4,6 +4,9 @@
 .aider*
 CLAUDE.md
 
+# Python
+__pycache__/
+
 # Build artifacts
 db-migrate/sql/
 
