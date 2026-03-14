@@ -56,12 +56,16 @@ def kubectl_json(*args: str) -> str:
     return result.stdout.strip()
 
 
-def setup_gke_credentials() -> None:
-    subprocess.run(
+def setup_gke_credentials() -> bool:
+    result = subprocess.run(
         ["gcloud", "container", "clusters", "get-credentials", GKE_CLUSTER,
          "--region", REGION, "--project", GKE_PROJECT],
         capture_output=True, text=True,
     )
+    if result.returncode != 0:
+        print(f"  [gcloud error] GKE credentials failed: {result.stderr.strip()}", file=sys.stderr)
+        return False
+    return True
 
 
 def check_cloudsql(project: str) -> list[str]:
@@ -157,12 +161,14 @@ def namespace_exists(env: str) -> bool:
     return result.returncode == 0
 
 
-def check_environment(env: str, project: str) -> list[str]:
+def check_environment(env: str, project: str, *, gke_available: bool = True) -> list[str]:
     findings: list[str] = []
     findings.extend(check_cloudsql(project))
-    if namespace_exists(env):
+    if gke_available and namespace_exists(env):
         findings.extend(check_gke_deployments(env))
         findings.extend(check_ingress(env))
+    elif not gke_available:
+        print(f"  GKE credentials unavailable, skipping GKE checks.")
     else:
         print(f"  Namespace '{env}' not found, skipping GKE checks.")
     findings.extend(check_static_ips(project))
@@ -198,12 +204,12 @@ def main() -> None:
         print("Error: ENVIRONMENTS_JSON is not set or empty", file=sys.stderr)
         sys.exit(1)
 
-    setup_gke_credentials()
+    gke_available = setup_gke_credentials()
     all_findings: dict[str, list[str]] = {}
 
     for env, project in environments.items():
         print(f"=== Checking {env} ({project}) ===")
-        findings = check_environment(env, project)
+        findings = check_environment(env, project, gke_available=gke_available)
         if findings:
             all_findings[env] = findings
             for f in findings:
