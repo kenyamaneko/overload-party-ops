@@ -14,6 +14,15 @@ CLOUDSQL_INSTANCE = "overload-party-db"
 DEPLOYMENTS = ["gateway", "battle"]
 
 
+def log(message: str, *, severity: str = "INFO") -> None:
+    """Cloud Logging 構造化ログ出力。"""
+    print(json.dumps({"message": message, "severity": severity}), flush=True)
+
+
+def _is_not_found(stderr: str) -> bool:
+    return "NotFound" in stderr or "not found" in stderr or "404" in stderr
+
+
 def load_environments() -> dict[str, str]:
     """ENVIRONMENTS_JSON 環境変数から監視対象を読み込む。
 
@@ -26,33 +35,42 @@ def load_environments() -> dict[str, str]:
     return json.loads(raw)
 
 
-def gcloud(*args: str) -> str:
+def gcloud(*args: str, allow_not_found: bool = False) -> str:
     result = subprocess.run(
         ["gcloud", *args, "--format=json"],
         capture_output=True, text=True,
     )
     if result.returncode != 0 and result.stderr.strip():
-        print(f"  [gcloud error] {result.stderr.strip()}", file=sys.stderr)
+        if allow_not_found and _is_not_found(result.stderr):
+            log(f"[gcloud] {result.stderr.strip()}", severity="DEBUG")
+        else:
+            log(f"[gcloud] {result.stderr.strip()}", severity="ERROR")
     return result.stdout.strip()
 
 
-def gcloud_value(*args: str) -> str:
+def gcloud_value(*args: str, allow_not_found: bool = False) -> str:
     result = subprocess.run(
         ["gcloud", *args],
         capture_output=True, text=True,
     )
     if result.returncode != 0 and result.stderr.strip():
-        print(f"  [gcloud error] {result.stderr.strip()}", file=sys.stderr)
+        if allow_not_found and _is_not_found(result.stderr):
+            log(f"[gcloud] {result.stderr.strip()}", severity="DEBUG")
+        else:
+            log(f"[gcloud] {result.stderr.strip()}", severity="ERROR")
     return result.stdout.strip()
 
 
-def kubectl_json(*args: str) -> str:
+def kubectl_json(*args: str, allow_not_found: bool = False) -> str:
     result = subprocess.run(
         ["kubectl", *args, "-o", "json"],
         capture_output=True, text=True,
     )
     if result.returncode != 0 and result.stderr.strip():
-        print(f"  [kubectl error] {result.stderr.strip()}", file=sys.stderr)
+        if allow_not_found and _is_not_found(result.stderr):
+            log(f"[kubectl] {result.stderr.strip()}", severity="DEBUG")
+        else:
+            log(f"[kubectl] {result.stderr.strip()}", severity="ERROR")
     return result.stdout.strip()
 
 
@@ -63,7 +81,7 @@ def setup_gke_credentials() -> bool:
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        print(f"  [gcloud error] GKE credentials failed: {result.stderr.strip()}", file=sys.stderr)
+        log(f"[gcloud] GKE credentials failed: {result.stderr.strip()}", severity="WARNING")
         return False
     return True
 
@@ -103,6 +121,7 @@ def check_ingress(env: str) -> list[str]:
         "get", "ingress", "overload-party",
         "-n", env,
         f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}",
+        allow_not_found=True,
     )
     if not raw:
         return []
@@ -168,9 +187,9 @@ def check_environment(env: str, project: str, *, gke_available: bool = True) -> 
         findings.extend(check_gke_deployments(env))
         findings.extend(check_ingress(env))
     elif not gke_available:
-        print(f"  GKE credentials unavailable, skipping GKE checks.")
+        log("GKE credentials unavailable, skipping GKE checks.", severity="WARNING")
     else:
-        print(f"  Namespace '{env}' not found, skipping GKE checks.")
+        log(f"Namespace '{env}' not found, skipping GKE checks.", severity="WARNING")
     findings.extend(check_static_ips(project))
     findings.extend(check_psc(project))
     return findings
@@ -186,7 +205,7 @@ def notify_slack(webhook_url: str, message: str) -> None:
     try:
         urllib.request.urlopen(req)
     except Exception as e:
-        print(f"Slack notification failed: {e}", file=sys.stderr)
+        log(f"Slack notification failed: {e}", severity="ERROR")
         sys.exit(1)
 
 
@@ -196,29 +215,29 @@ def main() -> None:
 
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
-        print("Error: SLACK_WEBHOOK_URL is not set", file=sys.stderr)
+        log("SLACK_WEBHOOK_URL is not set", severity="ERROR")
         sys.exit(1)
 
     environments = load_environments()
     if not environments:
-        print("Error: ENVIRONMENTS_JSON is not set or empty", file=sys.stderr)
+        log("ENVIRONMENTS_JSON is not set or empty", severity="ERROR")
         sys.exit(1)
 
     gke_available = setup_gke_credentials()
     all_findings: dict[str, list[str]] = {}
 
     for env, project in environments.items():
-        print(f"=== Checking {env} ({project}) ===")
+        log(f"=== Checking {env} ({project}) ===")
         findings = check_environment(env, project, gke_available=gke_available)
         if findings:
             all_findings[env] = findings
             for f in findings:
-                print(f"  - {f}")
+                log(f"  - {f}")
         else:
-            print("  No cost-bearing resources detected.")
+            log("No cost-bearing resources detected.")
 
     if not all_findings:
-        print("\nAll clear.")
+        log("All clear.")
         return
 
     lines = [f":warning: *[コスト警告 {today}] 稼働中リソースあり*", ""]
@@ -229,10 +248,10 @@ def main() -> None:
         lines.append("")
 
     message = "\n".join(lines)
-    print(f"\n{message}")
+    log(message, severity="WARNING")
 
     notify_slack(webhook_url, message)
-    print("Slack notification sent.")
+    log("Slack notification sent.")
 
 
 if __name__ == "__main__":
