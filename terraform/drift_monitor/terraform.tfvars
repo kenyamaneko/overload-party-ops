@@ -25,10 +25,11 @@ targets = [
       { name = "shared", path = "terraform/shared", project = "keyandnotes-ops" },
     ]
   },
-  {
-    repo = "overload-party-analytics"
-    environments = [
-      { name = "dev", path = "terraform/environments/dev", project = "overload-party-dev" },
-    ]
-  },
+  # Cloud Function のデプロイ準備ができたら有効化する
+  # {
+  #   repo = "overload-party-analytics"
+  #   environments = [
+  #     { name = "dev", path = "terraform/environments/dev", project = "overload-party-dev" },
+  #   ]
+  # },
 ]
