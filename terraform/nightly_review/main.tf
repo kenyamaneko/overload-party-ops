@@ -82,7 +82,7 @@ resource "google_cloud_run_v2_job" "nightly_review_diff" {
         }
       }
 
-      max_retries = 0
+      max_retries = 3
     }
   }
 }
