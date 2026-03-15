@@ -2,7 +2,7 @@ REGISTRY   := asia-northeast1-docker.pkg.dev
 AR_PROJECT := keyandnotes-platform
 AR_REPO    := overload-party
 REGION     := asia-northeast1
-PROJECT    ?= overload-party-dev
+PROJECT    ?= keyandnotes-ops
 
 JOBS := nightly-review cost-monitor drift-monitor db-migrate
 
