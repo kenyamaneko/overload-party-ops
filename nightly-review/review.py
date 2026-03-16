@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from datetime import datetime, timedelta, timezone
 
 GITHUB_ORG = "kenyamaneko"
@@ -42,7 +43,7 @@ REVIEW_CRITERIA = (
 DIFF_PROMPT = (
     "以下は昨日からの差分です。\n"
     f"{REVIEW_CRITERIA}"
-    "問題がなければ「問題なし」と一言だけ返してください。"
+    "問題がなければ LGTM とだけ返してください。"
     "Markdown形式で出力してください。"
 )
 
@@ -167,7 +168,8 @@ def review_full(repo: str) -> str | None:
         shutil.rmtree(clone_dir, ignore_errors=True)
 
 
-def create_issue(repo: str, title: str, label: str, body: str) -> bool:
+def create_issue(repo: str, title: str, label: str, body: str) -> str | None:
+    """Create a GitHub Issue and return its URL, or None on failure."""
     result = subprocess.run(
         ["gh", "issue", "create",
          "--repo", f"{GITHUB_ORG}/{repo}",
@@ -178,9 +180,36 @@ def create_issue(repo: str, title: str, label: str, body: str) -> bool:
     )
     if result.returncode != 0:
         print(f"  Error: failed to create issue: {result.stderr.strip()}")
-        return False
-    print(f"  Created: {result.stdout.strip()}")
-    return True
+        return None
+    issue_url = result.stdout.strip()
+    print(f"  Created: {issue_url}")
+    return issue_url
+
+
+def is_no_issues(body: str) -> bool:
+    return body.strip() == "LGTM"
+
+
+def notify_slack(title: str, issue_url: str) -> None:
+    webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
+    if not webhook_url:
+        return
+
+    text = f"*{title}*\nレビューコメントがあります\n{issue_url}"
+    payload = json.dumps({"text": text})
+
+    req = urllib.request.Request(
+        webhook_url,
+        data=payload.encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            if resp.status != 200:
+                print(f"  Warning: Slack notification failed: {resp.status}")
+    except Exception as e:
+        print(f"  Warning: Slack notification failed: {e}")
 
 
 def main() -> None:
@@ -217,8 +246,15 @@ def main() -> None:
         if body is None:
             continue
 
-        if not create_issue(repo, title, label, body):
+        if review_mode == "diff" and is_no_issues(body):
+            print("  No issues found, skipping issue creation.")
+            continue
+
+        issue_url = create_issue(repo, title, label, body)
+        if issue_url is None:
             has_error = True
+        else:
+            notify_slack(title, issue_url)
 
     print("=== Nightly review complete ===")
     sys.exit(1 if has_error else 0)

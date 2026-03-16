@@ -22,6 +22,14 @@ resource "google_secret_manager_secret" "anthropic_api_key" {
   }
 }
 
+resource "google_secret_manager_secret" "slack_webhook" {
+  secret_id = var.slack_webhook_secret
+
+  replication {
+    auto {}
+  }
+}
+
 # --- Service Account ---
 
 resource "google_service_account" "nightly_review" {
@@ -35,11 +43,21 @@ resource "google_secret_manager_secret_iam_member" "anthropic_key" {
   member    = "serviceAccount:${google_service_account.nightly_review.email}"
 }
 
+resource "google_secret_manager_secret_iam_member" "slack_webhook" {
+  secret_id = google_secret_manager_secret.slack_webhook.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.nightly_review.email}"
+}
+
 # --- Cloud Run Jobs ---
 
 resource "google_cloud_run_v2_job" "nightly_review_diff" {
   name     = "nightly-review-diff"
   location = var.region
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
+  }
 
   template {
     task_count = 1
@@ -73,6 +91,15 @@ resource "google_cloud_run_v2_job" "nightly_review_diff" {
             }
           }
         }
+        env {
+          name = "SLACK_WEBHOOK_URL"
+          value_source {
+            secret_key_ref {
+              secret  = var.slack_webhook_secret
+              version = "latest"
+            }
+          }
+        }
 
         resources {
           limits = {
@@ -90,6 +117,10 @@ resource "google_cloud_run_v2_job" "nightly_review_diff" {
 resource "google_cloud_run_v2_job" "nightly_review_full" {
   name     = "nightly-review-full"
   location = var.region
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
+  }
 
   template {
     task_count = 1
@@ -119,6 +150,15 @@ resource "google_cloud_run_v2_job" "nightly_review_full" {
           value_source {
             secret_key_ref {
               secret  = var.github_token_secret
+              version = "latest"
+            }
+          }
+        }
+        env {
+          name = "SLACK_WEBHOOK_URL"
+          value_source {
+            secret_key_ref {
+              secret  = var.slack_webhook_secret
               version = "latest"
             }
           }
