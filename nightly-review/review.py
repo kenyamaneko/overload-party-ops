@@ -99,7 +99,7 @@ def get_diff(repo: str, since: str) -> str | None:
     return raw if raw else None
 
 
-def run_claude(prompt: str, cwd: str | None = None) -> str | None:
+def run_claude(prompt: str) -> str | None:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(prompt)
         f.flush()
@@ -108,7 +108,6 @@ def run_claude(prompt: str, cwd: str | None = None) -> str | None:
                 ["claude", "-p", "--allowedTools", "Read,Grep,Glob"],
                 stdin=open(f.name),
                 capture_output=True, text=True,
-                cwd=cwd,
             )
         finally:
             os.unlink(f.name)
