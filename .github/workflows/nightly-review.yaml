@@ -16,5 +16,5 @@ jobs:
     with:
       job_dir: nightly-review
       image_name: nightly-review
-      cloud_run_jobs: nightly-review-diff,nightly-review-full
+      cloud_run_jobs: nightly-review-diff
     secrets: inherit

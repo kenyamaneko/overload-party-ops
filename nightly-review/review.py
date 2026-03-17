@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -44,12 +43,6 @@ DIFF_PROMPT = (
     "以下は昨日からの差分です。\n"
     f"{REVIEW_CRITERIA}"
     "問題がなければ LGTM とだけ返してください。"
-    "Markdown形式で出力してください。"
-)
-
-FULL_PROMPT = (
-    "このリポジトリ全体をレビューしてください。\n"
-    f"{REVIEW_CRITERIA}"
     "Markdown形式で出力してください。"
 )
 
@@ -143,31 +136,6 @@ def review_diff(repo: str, yesterday: str) -> str | None:
     return run_claude(prompt)
 
 
-def review_full(repo: str) -> str | None:
-    clone_dir = f"/tmp/{repo}"
-    if os.path.exists(clone_dir):
-        shutil.rmtree(clone_dir)
-
-    token = os.environ.get("GITHUB_TOKEN", "")
-    if not token:
-        print(f"  Error: GITHUB_TOKEN is not set", file=sys.stderr)
-        return None
-    clone_url = f"https://x-access-token:{token}@github.com/{GITHUB_ORG}/{repo}.git"
-
-    result = subprocess.run(
-        ["git", "clone", "--quiet", clone_url, clone_dir],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        print(f"  Error: git clone failed: {result.stderr.strip()}")
-        return None
-
-    try:
-        return run_claude(FULL_PROMPT, cwd=clone_dir)
-    finally:
-        shutil.rmtree(clone_dir, ignore_errors=True)
-
-
 def create_issue(repo: str, title: str, label: str, body: str) -> str | None:
     """Create a GitHub Issue and return its URL, or None on failure."""
     result = subprocess.run(
@@ -217,36 +185,28 @@ def main() -> None:
     today = datetime.now(jst).strftime("%Y-%m-%d")
     yesterday = (datetime.now(jst) - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    review_mode = os.environ.get("REVIEW_MODE", "diff")
     skip_if_exists = os.environ.get("SKIP_IF_EXISTS", "true") == "true"
-
-    if review_mode == "full":
-        kind, label = "全体", "auto-review-full"
-    else:
-        kind, label = "差分", "auto-review"
+    label = "auto-review"
 
     has_error = False
 
     for repo in REPOS:
-        print(f"=== {repo} ({review_mode}) ===")
+        print(f"=== {repo} ===")
 
-        title = f"[自動レビュー {today}] {kind} {repo}"
+        title = f"[自動レビュー {today}] 差分 {repo}"
 
-        if skip_if_exists and issue_exists(repo, f"[自動レビュー {today}] {kind}"):
+        if skip_if_exists and issue_exists(repo, f"[自動レビュー {today}] 差分"):
             print("  Issue already exists, skipping.")
             continue
 
         ensure_label(repo, label)
 
-        if review_mode == "full":
-            body = review_full(repo)
-        else:
-            body = review_diff(repo, yesterday)
+        body = review_diff(repo, yesterday)
 
         if body is None:
             continue
 
-        if review_mode == "diff" and is_no_issues(body):
+        if is_no_issues(body):
             print("  No issues found, skipping issue creation.")
             continue
 
