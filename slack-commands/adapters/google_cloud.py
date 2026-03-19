@@ -17,18 +17,36 @@ async def _get_access_token() -> str:
         return resp.json()["access_token"]
 
 
-async def get_instance_status(project: str, instance: str) -> tuple[str, str]:
-    """Cloud SQL インスタンスの activationPolicy と state を返す。"""
+async def get_activation_policy(project: str, instance: str) -> str:
+    """Cloud SQL インスタンスの activationPolicy を取得する。"""
     token = await _get_access_token()
     url = f"{SQLADMIN_API}/projects/{project}/instances/{instance}"
 
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
         resp.raise_for_status()
-        data = resp.json()
-        policy = data.get("settings", {}).get("activationPolicy", "UNKNOWN")
-        state = data.get("state", "UNKNOWN")
-        return policy, state
+        return resp.json().get("settings", {}).get("activationPolicy", "UNKNOWN")
+
+
+async def has_pending_update(project: str, instance: str) -> bool:
+    """インスタンスに進行中の UPDATE オペレーションがあるか確認する。
+
+    Cloud SQL の operationType "UPDATE" には activationPolicy 変更のほか
+    マシンタイプ変更・ディスクリサイズ等も含まれる。
+    いずれの場合も UPDATE 進行中は patch が 409 になるため、
+    activationPolicy 変更だけを区別する必要はない。
+    """
+    token = await _get_access_token()
+    url = f"{SQLADMIN_API}/projects/{project}/operations?instance={instance}"
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        resp.raise_for_status()
+
+    for op in resp.json().get("items", []):
+        if op.get("operationType") == "UPDATE" and op.get("status") != "DONE":
+            return True
+    return False
 
 
 class OperationInProgressError(Exception):

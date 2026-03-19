@@ -1,6 +1,6 @@
 import logging
 
-from adapters.google_cloud import OperationInProgressError, get_instance_status, patch_activation_policy, wait_for_operation
+from adapters.google_cloud import OperationInProgressError, get_activation_policy, has_pending_update, patch_activation_policy, wait_for_operation
 from adapters.slack_response import post_in_channel
 
 logger = logging.getLogger(__name__)
@@ -29,12 +29,15 @@ async def handle_start(response_url: str, text: str) -> None:
             await post_in_channel(response_url, f"未対応の環境です: `{env}` (dev, stg のみ)")
             return
 
-        policy, state = await get_instance_status(project, INSTANCE)
-        if policy == "ALWAYS" and state == "RUNNABLE":
-            await post_in_channel(response_url, f":white_check_mark: `{env}` の Cloud SQL は既に起動中です")
-            return
-        if policy == "ALWAYS" and state != "RUNNABLE":
-            await post_in_channel(response_url, f":hourglass_flowing_sand: `{env}` の Cloud SQL は起動処理が進行中です。完了までお待ちください。")
+        # activationPolicy だけではインスタンスが実際に起動完了しているか判断できない。
+        # policy=ALWAYS でもオペレーション進行中なら起動途中のため、
+        # operations.list で進行中の UPDATE（activationPolicy 変更やマシンタイプ変更等）を確認する。
+        policy = await get_activation_policy(project, INSTANCE)
+        if policy == "ALWAYS":
+            if await has_pending_update(project, INSTANCE):
+                await post_in_channel(response_url, f":hourglass_flowing_sand: `{env}` の Cloud SQL は起動処理が進行中です。完了までお待ちください。")
+            else:
+                await post_in_channel(response_url, f":white_check_mark: `{env}` の Cloud SQL は既に起動中です")
             return
 
         op = await patch_activation_policy(project, INSTANCE, "ALWAYS")
@@ -64,12 +67,12 @@ async def handle_stop(response_url: str, text: str) -> None:
             await post_in_channel(response_url, f"未対応の環境です: `{env}` (dev, stg のみ)")
             return
 
-        policy, state = await get_instance_status(project, INSTANCE)
-        if policy == "NEVER" and state == "SUSPENDED":
-            await post_in_channel(response_url, f":white_check_mark: `{env}` の Cloud SQL は既に停止しています")
-            return
-        if policy == "NEVER" and state != "SUSPENDED":
-            await post_in_channel(response_url, f":hourglass_flowing_sand: `{env}` の Cloud SQL は停止処理が進行中です。完了までお待ちください。")
+        policy = await get_activation_policy(project, INSTANCE)
+        if policy == "NEVER":
+            if await has_pending_update(project, INSTANCE):
+                await post_in_channel(response_url, f":hourglass_flowing_sand: `{env}` の Cloud SQL は停止処理が進行中です。完了までお待ちください。")
+            else:
+                await post_in_channel(response_url, f":white_check_mark: `{env}` の Cloud SQL は既に停止しています")
             return
 
         op = await patch_activation_policy(project, INSTANCE, "NEVER")
