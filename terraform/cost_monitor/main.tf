@@ -22,27 +22,11 @@ resource "google_project_service" "sqladmin" {
   disable_on_destroy = false
 }
 
-# --- Secrets (枠のみ。バージョンは手動登録) ---
-
-resource "google_secret_manager_secret" "slack_webhook" {
-  secret_id = var.slack_webhook_secret
-
-  replication {
-    auto {}
-  }
-}
-
 # --- Service Account ---
 
 resource "google_service_account" "cost_monitor" {
   account_id   = "cost-monitor"
   display_name = "Cost Monitor Job SA"
-}
-
-resource "google_secret_manager_secret_iam_member" "slack_webhook" {
-  secret_id = google_secret_manager_secret.slack_webhook.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.cost_monitor.email}"
 }
 
 # Cloud SQL の状態確認に必要（各監視対象プロジェクト）
@@ -92,7 +76,7 @@ resource "google_cloud_run_v2_job" "cost_monitor" {
           name = "SLACK_WEBHOOK_URL"
           value_source {
             secret_key_ref {
-              secret  = var.slack_webhook_secret
+              secret  = "slack-webhook-url"
               version = "latest"
             }
           }

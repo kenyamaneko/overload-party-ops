@@ -18,27 +18,11 @@ locals {
   ]))
 }
 
-# --- Secrets (枠のみ。バージョンは手動登録) ---
-
-resource "google_secret_manager_secret" "slack_webhook" {
-  secret_id = var.slack_webhook_secret
-
-  replication {
-    auto {}
-  }
-}
-
 # --- Service Account ---
 
 resource "google_service_account" "drift_monitor" {
   account_id   = "drift-monitor"
   display_name = "Terraform Drift Monitor Job SA"
-}
-
-resource "google_secret_manager_secret_iam_member" "slack_webhook" {
-  secret_id = google_secret_manager_secret.slack_webhook.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.drift_monitor.email}"
 }
 
 # Terraform state bucket への読み取り
@@ -88,7 +72,7 @@ resource "google_cloud_run_v2_job" "drift_monitor" {
           name = "SLACK_WEBHOOK_URL"
           value_source {
             secret_key_ref {
-              secret  = var.slack_webhook_secret
+              secret  = "slack-webhook-url"
               version = "latest"
             }
           }

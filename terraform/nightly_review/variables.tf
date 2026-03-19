@@ -26,12 +26,6 @@ variable "github_token_secret" {
   default     = "github-token"
 }
 
-variable "slack_webhook_secret" {
-  description = "Secret Manager secret name for SLACK_WEBHOOK_URL"
-  type        = string
-  default     = "slack-webhook-nightly-review"
-}
-
 variable "repos" {
   description = "レビュー対象リポジトリ一覧。Python スクリプトへ JSON で渡す"
   type        = list(string)

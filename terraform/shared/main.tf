@@ -28,3 +28,20 @@ resource "google_secret_manager_secret_iam_member" "github_token" {
   role      = "roles/secretmanager.secretAccessor"
   member    = each.value
 }
+
+# --- 共有 Secret: slack-webhook-url ---
+
+resource "google_secret_manager_secret" "slack_webhook_url" {
+  secret_id = "slack-webhook-url"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "slack_webhook_url" {
+  for_each  = toset(var.slack_webhook_url_accessors)
+  secret_id = google_secret_manager_secret.slack_webhook_url.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = each.value
+}

@@ -14,12 +14,6 @@ variable "image" {
   type        = string
 }
 
-variable "slack_webhook_secret" {
-  description = "Secret Manager secret name for Slack webhook URL"
-  type        = string
-  default     = "slack-webhook-drift-monitor"
-}
-
 variable "github_token_secret" {
   description = "Secret Manager secret name for GitHub token"
   type        = string

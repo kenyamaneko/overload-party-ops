@@ -13,3 +13,8 @@ variable "github_token_accessors" {
   description = "github-token Secret にアクセスする SA の member 文字列リスト"
   type        = list(string)
 }
+
+variable "slack_webhook_url_accessors" {
+  description = "slack-webhook-url Secret にアクセスする SA の member 文字列リスト"
+  type        = list(string)
+}
