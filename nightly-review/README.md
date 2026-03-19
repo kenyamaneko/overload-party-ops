@@ -4,10 +4,7 @@ Claude Code を使った夜間自動レビューシステム。Cloud Scheduler +
 
 ## スケジュール
 
-| 曜日 | モード | 内容 |
-|------|--------|------|
-| 水曜以外 | 差分レビュー | GitHub API で前日との diff を取得 |
-| 水曜 | 全体レビュー | git clone してリポジトリ全体を精読 |
+毎晩 3:00 (JST) に各リポジトリの前日との差分をレビューする。
 
 ## セットアップ
 
@@ -16,6 +13,7 @@ Claude Code を使った夜間自動レビューシステム。Cloud Scheduler +
 ```bash
 echo -n "sk-ant-..." | gcloud secrets create anthropic-api-key --data-file=-
 echo -n "ghp_..." | gcloud secrets create github-token --data-file=-
+echo -n "https://hooks.slack.com/..." | gcloud secrets create slack-webhook-nightly-review --data-file=-
 ```
 
 ### 2. Docker イメージをビルド・プッシュ
@@ -35,13 +33,15 @@ terraform apply \
   -var="image=asia-northeast1-docker.pkg.dev/PROJECT_ID/REPO/nightly-review:latest"
 ```
 
+必須変数は `project_id` と `image`。その他の変数（`anthropic_api_key_secret`、`github_token_secret`、`slack_webhook_secret`、`repos`）はデフォルト値あり。詳細は [variables.tf](../terraform/nightly_review/variables.tf) を参照。
+
 ## 対象リポジトリの変更
 
-[review.py](review.py) 内の `REPOS` リストを編集してリビルドしてください。
+Terraform の `repos` 変数を変更してください。デフォルト値は [variables.tf](../terraform/nightly_review/variables.tf) で定義されています。
 
 ## GitHub Issues
 
 - 起票先: 各対象リポジトリ
-- タイトル: `[自動レビュー YYYY-MM-DD] {差分|全体} {リポジトリ名}`
-- ラベル: `auto-review`（差分）/ `auto-review-full`（全体）
+- タイトル: `[自動レビュー YYYY-MM-DD] 差分 {リポジトリ名}`
+- ラベル: `auto-review`
 - 同日・同リポジトリの Issue が既に存在する場合はスキップ

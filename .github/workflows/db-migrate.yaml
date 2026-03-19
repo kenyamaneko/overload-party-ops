@@ -18,22 +18,11 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: read
-  id-token: write
-
-env:
-  REGION: asia-northeast1
-  REGISTRY: asia-northeast1-docker.pkg.dev
-  AR_PROJECT: keyandnotes-platform
-  AR_REPOSITORY: overload-party
-  IMAGE_NAME: db-migrate
-
 jobs:
-  migrate:
+  config:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-
+    outputs:
+      project: ${{ steps.config.outputs.project }}
     steps:
       - name: Set project ID
         id: config
@@ -44,97 +33,12 @@ jobs:
             *)    echo "Unsupported environment"; exit 1 ;;
           esac
 
-      - name: Checkout ops repo
-        uses: actions/checkout@v4
-
-      - name: Checkout common repo (SQL files only)
-        uses: actions/checkout@v4
-        with:
-          repository: kenyamaneko/overload-party-common
-          token: ${{ secrets.COMMON_REPO_TOKEN }}
-          path: common
-          sparse-checkout: db/
-
-      - name: Copy SQL files into build context
-        run: |
-          mkdir -p db-migrate/sql
-          cp common/db/schema_postgres.sql db-migrate/sql/
-          cp common/db/grant_iam.sql db-migrate/sql/
-
-      - name: Get previous schema for safety check
-        run: |
-          cd common
-          git show HEAD~1:db/schema_postgres.sql > /tmp/schema_old.sql 2>/dev/null || touch /tmp/schema_old.sql
-
-      - name: Schema safety check
-        run: python3 db-migrate/schema_check.py /tmp/schema_old.sql db-migrate/sql/schema_postgres.sql
-
-      - name: Authenticate to Google Cloud
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: ${{ secrets.CI_SERVICE_ACCOUNT }}
-          token_format: access_token
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Login to Artifact Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.access_token }}
-
-      - name: Build and push migration image
-        run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}
-          docker build \
-            -t ${IMAGE}:${{ github.sha }} \
-            -t ${IMAGE}:latest \
-            db-migrate/
-          docker push ${IMAGE}:${{ github.sha }}
-          docker push ${IMAGE}:latest
-
-      - name: Ensure Cloud SQL instance is running
-        run: |
-          gcloud sql instances patch ${{ secrets.CLOUDSQL_INSTANCE_NAME }} \
-            --project=${{ steps.config.outputs.project }} \
-            --activation-policy=ALWAYS --quiet
-          echo "Waiting for instance to become RUNNABLE..."
-          for i in $(seq 1 60); do
-            STATE=$(gcloud sql instances describe ${{ secrets.CLOUDSQL_INSTANCE_NAME }} \
-              --project=${{ steps.config.outputs.project }} --format='value(state)')
-            if [ "$STATE" = "RUNNABLE" ]; then
-              echo "Instance is RUNNABLE (attempt ${i})"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Instance failed to become RUNNABLE (state: ${STATE})"
-              exit 1
-            fi
-            sleep 5
-          done
-
-      - name: Update Cloud Run Job image
-        run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          gcloud run jobs update db-migrate \
-            --region ${{ env.REGION }} \
-            --project ${{ steps.config.outputs.project }} \
-            --image "${IMAGE}" \
-            --quiet
-
-      - name: Execute migration job
-        if: ${{ !inputs.dry_run }}
-        run: |
-          gcloud run jobs execute db-migrate \
-            --region ${{ env.REGION }} \
-            --project ${{ steps.config.outputs.project }} \
-            --wait \
-            --quiet
-
-      - name: Dry-run notice
-        if: ${{ inputs.dry_run }}
-        run: echo "Dry-run mode — image updated but job was NOT executed."
+  migrate:
+    needs: config
+    uses: ./.github/workflows/db-migrate-job.yaml
+    with:
+      environment: ${{ inputs.environment }}
+      project: ${{ needs.config.outputs.project }}
+      image_sha: ${{ github.sha }}
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit

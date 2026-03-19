@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 GITHUB_ORG = "kenyamaneko"
 MAX_DIFF_CHARS = 50000
 
-REPOS = [
+DEFAULT_REPOS = [
     "overload-party-common",
     "overload-party-client",
     "overload-party-battle",
@@ -21,6 +21,11 @@ REPOS = [
     "overload-party-analytics",
     "overload-party-ops",
 ]
+
+
+def load_repos() -> list[str]:
+    raw = os.environ.get("REPOS_JSON", "")
+    return json.loads(raw) if raw else DEFAULT_REPOS
 
 REVIEW_CRITERIA = (
     "以下の観点でレビューしてください。\n"
@@ -52,6 +57,8 @@ def gh(*args: str) -> str:
         ["gh", *args],
         capture_output=True, text=True,
     )
+    if result.returncode != 0:
+        print(f"  Warning: gh {args[0]} failed: {result.stderr.strip()}")
     return result.stdout.strip()
 
 
@@ -104,11 +111,12 @@ def run_claude(prompt: str) -> str | None:
         f.write(prompt)
         f.flush()
         try:
-            result = subprocess.run(
-                ["claude", "-p", "--allowedTools", "Read,Grep,Glob"],
-                stdin=open(f.name),
-                capture_output=True, text=True,
-            )
+            with open(f.name) as stdin_file:
+                result = subprocess.run(
+                    ["claude", "-p", "--allowedTools", "Read,Grep,Glob"],
+                    stdin=stdin_file,
+                    capture_output=True, text=True,
+                )
         finally:
             os.unlink(f.name)
 
@@ -158,6 +166,7 @@ def is_no_issues(body: str) -> bool:
 
 
 def notify_slack(title: str, issue_url: str) -> None:
+    # Slack 通知失敗はジョブ全体を止めるほどではないため Warning のみ出力して継続する
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
         return
@@ -189,7 +198,9 @@ def main() -> None:
 
     has_error = False
 
-    for repo in REPOS:
+    repos = load_repos()
+
+    for repo in repos:
         print(f"=== {repo} ===")
 
         title = f"[自動レビュー {today}] 差分 {repo}"

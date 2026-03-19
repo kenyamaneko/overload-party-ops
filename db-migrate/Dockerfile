@@ -6,7 +6,7 @@
 FROM golang:alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /build
-RUN git clone --depth 1 https://github.com/sqldef/sqldef.git .
+RUN git clone --depth 1 --branch v3.10.1 https://github.com/sqldef/sqldef.git .
 RUN sed -i 's/AND f\.attnum > 0/AND f.attnum > 0 AND NOT f.attisdropped/' \
       database/postgres/database.go \
     && sed -i 's/s\.column_name,/COALESCE(s.column_name, f.attname) AS column_name,/' \

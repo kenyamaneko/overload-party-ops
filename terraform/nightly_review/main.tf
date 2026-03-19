@@ -96,6 +96,10 @@ resource "google_cloud_run_v2_job" "nightly_review_diff" {
             }
           }
         }
+        env {
+          name  = "REPOS_JSON"
+          value = jsonencode(var.repos)
+        }
 
         resources {
           limits = {

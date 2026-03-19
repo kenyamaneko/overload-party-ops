@@ -31,3 +31,19 @@ variable "slack_webhook_secret" {
   type        = string
   default     = "slack-webhook-nightly-review"
 }
+
+variable "repos" {
+  description = "レビュー対象リポジトリ一覧。Python スクリプトへ JSON で渡す"
+  type        = list(string)
+  default = [
+    "overload-party-common",
+    "overload-party-client",
+    "overload-party-battle",
+    "overload-party-gateway",
+    "overload-party-infra",
+    "overload-party-k8s",
+    "overload-party-newsfeed",
+    "overload-party-analytics",
+    "overload-party-ops",
+  ]
+}

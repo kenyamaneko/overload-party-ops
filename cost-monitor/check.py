@@ -35,43 +35,28 @@ def load_environments() -> dict[str, str]:
     return json.loads(raw)
 
 
-def gcloud(*args: str, allow_not_found: bool = False) -> str:
-    result = subprocess.run(
-        ["gcloud", *args, "--format=json"],
-        capture_output=True, text=True,
-    )
+def _run_cmd(
+    cmd: list[str], *, label: str = "cmd", allow_not_found: bool = False,
+) -> str:
+    result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0 and result.stderr.strip():
         if allow_not_found and _is_not_found(result.stderr):
-            log(f"[gcloud] {result.stderr.strip()}", severity="DEBUG")
+            log(f"[{label}] {result.stderr.strip()}", severity="DEBUG")
         else:
-            log(f"[gcloud] {result.stderr.strip()}", severity="ERROR")
+            log(f"[{label}] {result.stderr.strip()}", severity="ERROR")
     return result.stdout.strip()
+
+
+def gcloud(*args: str, allow_not_found: bool = False) -> str:
+    return _run_cmd(["gcloud", *args, "--format=json"], label="gcloud", allow_not_found=allow_not_found)
 
 
 def gcloud_value(*args: str, allow_not_found: bool = False) -> str:
-    result = subprocess.run(
-        ["gcloud", *args],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0 and result.stderr.strip():
-        if allow_not_found and _is_not_found(result.stderr):
-            log(f"[gcloud] {result.stderr.strip()}", severity="DEBUG")
-        else:
-            log(f"[gcloud] {result.stderr.strip()}", severity="ERROR")
-    return result.stdout.strip()
+    return _run_cmd(["gcloud", *args], label="gcloud", allow_not_found=allow_not_found)
 
 
 def kubectl_json(*args: str, allow_not_found: bool = False) -> str:
-    result = subprocess.run(
-        ["kubectl", *args, "-o", "json"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0 and result.stderr.strip():
-        if allow_not_found and _is_not_found(result.stderr):
-            log(f"[kubectl] {result.stderr.strip()}", severity="DEBUG")
-        else:
-            log(f"[kubectl] {result.stderr.strip()}", severity="ERROR")
-    return result.stdout.strip()
+    return _run_cmd(["kubectl", *args, "-o", "json"], label="kubectl", allow_not_found=allow_not_found)
 
 
 def setup_gke_credentials() -> bool:
@@ -112,7 +97,7 @@ def check_gke_deployments(env: str) -> list[str]:
             if replicas > 0:
                 findings.append(f"Deployment `{deploy}` が {replicas} レプリカ稼働中")
         except json.JSONDecodeError:
-            pass
+            log(f"Failed to parse deployment JSON for {deploy}", severity="WARNING")
     return findings
 
 
@@ -132,7 +117,7 @@ def check_ingress(env: str) -> list[str]:
             ip = ip_list[0].get("ip", "unknown")
             return [f"Ingress `overload-party` が稼働中 (IP: {ip}, ~$0.025/hr)"]
     except json.JSONDecodeError:
-        pass
+        log("Failed to parse ingress JSON", severity="WARNING")
     return []
 
 
@@ -146,6 +131,7 @@ def check_static_ips(project: str) -> list[str]:
     try:
         addresses = json.loads(raw) if raw else []
     except json.JSONDecodeError:
+        log("Failed to parse static IPs JSON", severity="WARNING")
         addresses = []
     for addr in addresses:
         name = addr.get("name", "unknown")
@@ -164,6 +150,7 @@ def check_psc(project: str) -> list[str]:
     try:
         rules = json.loads(raw) if raw else []
     except json.JSONDecodeError:
+        log("Failed to parse PSC forwarding rules JSON", severity="WARNING")
         rules = []
     for rule in rules:
         name = rule.get("name", "unknown")
