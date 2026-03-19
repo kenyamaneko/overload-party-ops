@@ -50,3 +50,31 @@ async def fetch_open_issues(
         results = await asyncio.gather(*tasks)
 
     return {repo: issues for repo, issues in zip(repos, results) if issues}
+
+
+async def dispatch_workflow(
+    org: str, repo: str, workflow_id: str, inputs: dict[str, str],
+) -> bool:
+    """GitHub Actions の workflow_dispatch イベントをトリガーする。"""
+    if not GITHUB_TOKEN:
+        logger.error("GITHUB_TOKEN is not configured")
+        return False
+
+    url = f"{GITHUB_API}/repos/{org}/{repo}/actions/workflows/{workflow_id}/dispatches"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+    }
+    body = {"ref": "main", "inputs": inputs}
+
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json=body, headers=headers, timeout=10)
+        except httpx.HTTPError as e:
+            logger.error("GitHub API error: %s", e)
+            return False
+
+    if resp.status_code == 204:
+        return True
+    logger.warning("workflow_dispatch failed %s: %s", resp.status_code, resp.text)
+    return False
