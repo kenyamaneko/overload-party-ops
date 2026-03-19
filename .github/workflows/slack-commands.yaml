@@ -1,0 +1,20 @@
+name: Slack Commands
+
+on:
+  push:
+    branches: [main]
+    paths: [slack-commands/**]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-deploy:
+    uses: ./.github/workflows/build-deploy-service.yaml
+    with:
+      service_dir: slack-commands
+      image_name: slack-commands
+      cloud_run_service: slack-commands
+    secrets: inherit

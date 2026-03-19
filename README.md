@@ -1,6 +1,6 @@
 # overload-party-ops
 
-Overload Party の運用ジョブ管理リポジトリ。Cloud Run Jobs で実行するコンテナイメージと GitHub Actions ワークフローを管理する。
+Overload Party の運用ジョブ・サービス管理リポジトリ。Cloud Run Jobs / Services で実行するコンテナイメージと GitHub Actions ワークフローを管理する。
 
 ## ジョブ一覧
 
@@ -10,6 +10,12 @@ Overload Party の運用ジョブ管理リポジトリ。Cloud Run Jobs で実�
 | `nightly-review` | 毎晩 3:00 (JST) に全リポジトリを自動レビュー → GitHub Issues 起票 | Claude Code, gh |
 | `cost-monitor` | 毎朝 8:00 (JST) に dev/stg のコスト発生リソースをチェック → Slack 通知 | gcloud, kubectl |
 | `drift-monitor` | 毎朝 7:00 (JST) に全リポジトリの Terraform plan を実行し drift 検出 → Slack 通知 | terraform, git |
+
+## サービス一覧
+
+| サービス | 説明 | ツール |
+|---------|------|--------|
+| `slack-commands` | Slack スラッシュコマンド（`/open-issues` 等）を処理する HTTP サービス | FastAPI, httpx |
 
 ## 使い方
 
@@ -61,6 +67,11 @@ cost-monitor/            # 環境コスト監視（Cloud Run Job）
 drift-monitor/           # Terraform drift 検出（Cloud Run Job）
   Dockerfile             # terraform + gcloud SDK + git イメージ
   check.py               # 全リポの terraform plan → drift 検出 → Slack 通知
+slack-commands/          # Slack スラッシュコマンド（Cloud Run Service）
+  Dockerfile             # Python 3.12 + FastAPI
+  main.py                # FastAPI アプリ、コマンドディスパッチ
+  adapters/              # 外部サービス連携（GitHub API, Slack 署名検証）
+  routers/               # コマンドハンドラ（open_reviews 等）
 terraform/
   shared/                # 複数ジョブで共有する Secret（github-token）と IAM
     main.tf
@@ -74,26 +85,32 @@ terraform/
   drift_monitor/         # Cloud Run Job + Cloud Scheduler + SA + IAM
     main.tf
     variables.tf
+  slack_commands/        # Cloud Run Service + SA + IAM
+    main.tf
+    variables.tf
 .github/workflows/
-  build-deploy-job.yaml    # 共通ビルド・デプロイ (reusable workflow)
-  nightly-review.yaml      # nightly-review のビルド・デプロイ
-  cost-monitor.yaml        # cost-monitor のビルド・デプロイ
-  drift-monitor.yaml       # drift-monitor のビルド・デプロイ
-  db-migrate.yaml          # 手動 dispatch: ビルド → push → Cloud Run Job 実行
-  db-migrate-on-push.yaml  # 自動: common の push で dev に適用
-Makefile                   # ローカル開発用コマンド
+  build-deploy-job.yaml      # ジョブ共通ビルド・デプロイ (reusable workflow)
+  build-deploy-service.yaml  # サービス共通ビルド・デプロイ (reusable workflow)
+  nightly-review.yaml        # nightly-review のビルド・デプロイ
+  cost-monitor.yaml          # cost-monitor のビルド・デプロイ
+  drift-monitor.yaml         # drift-monitor のビルド・デプロイ
+  slack-commands.yaml        # slack-commands のビルド・デプロイ
+  db-migrate.yaml            # 手動 dispatch: ビルド → push → Cloud Run Job 実行
+  db-migrate-on-push.yaml    # 自動: common の push で dev に適用
+Makefile                     # ローカル開発用コマンド
 ```
 
 ## CI/CD
 
-各ジョブのディレクトリ配下を変更して main に push すると、自動でイメージビルド → AR push → Cloud Run Job 更新が実行される。
+各ジョブ・サービスのディレクトリ配下を変更して main に push すると、自動でイメージビルド → AR push → Cloud Run 更新が実行される。
 
-| ジョブ | ワークフロー | トリガー |
-|--------|------------|---------|
+| 名前 | ワークフロー | トリガー |
+|------|------------|---------|
 | `db-migrate` | `db-migrate.yaml` | 手動 dispatch / common push（dev 自動） |
 | `nightly-review` | `nightly-review.yaml` | main push (`nightly-review/**`) / 手動 dispatch |
 | `cost-monitor` | `cost-monitor.yaml` | main push (`cost-monitor/**`) / 手動 dispatch |
 | `drift-monitor` | `drift-monitor.yaml` | main push (`drift-monitor/**`) / 手動 dispatch |
+| `slack-commands` | `slack-commands.yaml` | main push (`slack-commands/**`) / 手動 dispatch |
 
 ## ローカル開発
 
@@ -107,15 +124,63 @@ make push-cost-monitor
 # ビルド + push + Cloud Run Job 更新（デフォルト: overload-party-dev）
 make deploy-cost-monitor
 
+# ビルド + push + Cloud Run Service 更新
+make deploy-service-slack-commands
+
 # stg 環境にデプロイ
 make deploy-cost-monitor PROJECT=overload-party-stg
 
-# 全ジョブビルド
+# 全イメージビルド
 make build-all
 
 # コマンド一覧
 make help
 ```
+
+## Slack Commands セットアップ
+
+初回のみ以下の手動手順が必要。
+
+### 1. Slack App 作成
+
+1. https://api.slack.com/apps で **Create New App** → **From scratch**
+2. App Name: `overload-party-ops`（今後他のコマンドも同じ App に追加する）
+3. ワークスペースを選択して作成
+
+### 2. Terraform apply
+
+```bash
+cd terraform/shared
+terraform apply    # github-token の accessors に slack-commands SA を追加
+
+cd ../slack_commands
+terraform init
+terraform apply    # Cloud Run Service, SA, Secret, IAM を作成
+```
+
+### 3. Signing Secret を Secret Manager に登録
+
+Slack App の **Settings** → **Basic Information** → **App Credentials** → **Signing Secret** をコピー:
+
+```bash
+echo -n '<Signing Secret>' | gcloud secrets versions add slack-signing-secret --data-file=- --project=keyandnotes-ops
+```
+
+### 4. デプロイと URL 取得
+
+```bash
+make deploy-service-slack-commands
+
+gcloud run services describe slack-commands --region asia-northeast1 --project keyandnotes-ops --format='value(status.url)'
+```
+
+### 5. スラッシュコマンド登録
+
+1. Slack App の左メニュー **Slash Commands** → **Create New Command**
+2. Command: `/open-issues`
+3. Request URL: `https://<手順 4 で取得した URL>/slack/commands`
+4. Short Description: `未クローズの自動レビュー Issue を一覧表示`
+5. **Install to Workspace** で App をインストール
 
 ## 関連リポジトリ
 

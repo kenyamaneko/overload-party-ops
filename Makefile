@@ -35,6 +35,15 @@ deploy-%: push-% ## Build, push, and update Cloud Run Job (e.g. make deploy-cost
 	    --quiet; \
 	done
 
-build-all: $(addprefix build-,$(JOBS)) ## Build all job images
+SERVICES := slack-commands
 
-push-all: $(addprefix push-,$(JOBS)) ## Build and push all job images
+deploy-service-%: push-% ## Build, push, and update Cloud Run Service (e.g. make deploy-service-slack-commands)
+	gcloud run services update $* \
+	  --region $(REGION) \
+	  --project $(PROJECT) \
+	  --image $(IMAGE_BASE)/$*:latest \
+	  --quiet
+
+build-all: $(addprefix build-,$(JOBS)) $(addprefix build-,$(SERVICES)) ## Build all images
+
+push-all: $(addprefix push-,$(JOBS)) $(addprefix push-,$(SERVICES)) ## Build and push all images

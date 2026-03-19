@@ -1,0 +1,74 @@
+# ops サービス共通のビルド・デプロイ。caller workflow から workflow_call で呼び出す。
+name: Build and Deploy Service
+
+on:
+  workflow_call:
+    inputs:
+      service_dir:
+        description: "Build context directory (e.g. slack-commands)"
+        required: true
+        type: string
+      image_name:
+        description: "Image name in Artifact Registry"
+        required: true
+        type: string
+      cloud_run_service:
+        description: "Cloud Run Service name to update"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: asia-northeast1
+  REGISTRY: asia-northeast1-docker.pkg.dev
+  AR_PROJECT: keyandnotes-platform
+  AR_REPOSITORY: overload-party
+  PROJECT: keyandnotes-ops
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.CI_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push image
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ inputs.image_name }}
+          docker build \
+            -t ${IMAGE}:${{ github.sha }} \
+            -t ${IMAGE}:latest \
+            ${{ inputs.service_dir }}/
+          docker push ${IMAGE}:${{ github.sha }}
+          docker push ${IMAGE}:latest
+
+      - name: Update Cloud Run Service
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ inputs.image_name }}:${{ github.sha }}
+          gcloud run services update "${{ inputs.cloud_run_service }}" \
+            --region ${{ env.REGION }} \
+            --project ${{ env.PROJECT }} \
+            --image "${IMAGE}" \
+            --quiet
