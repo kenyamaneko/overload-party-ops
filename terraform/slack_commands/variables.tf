@@ -26,6 +26,12 @@ variable "slack_signing_secret" {
   default     = "slack-signing-secret"
 }
 
+variable "cloudsql_projects" {
+  description = "Cloud SQL 操作を許可する GCP プロジェクト ID のリスト"
+  type        = list(string)
+  default     = ["overload-party-dev", "overload-party-stg"]
+}
+
 variable "repos" {
   description = "List of GitHub repositories to query"
   type        = list(string)

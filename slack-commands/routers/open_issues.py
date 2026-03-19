@@ -42,7 +42,7 @@ def _format_response(results: dict) -> str:
     return "\n".join(lines)
 
 
-async def handle(response_url: str) -> None:
+async def handle(response_url: str, text: str = "") -> None:
     """バックグラウンドで GitHub API を呼び出し、結果を response_url に返す。"""
     try:
         repos = _load_repos()
