@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 REGION = "asia-northeast1"
 GKE_PROJECT = "keyandnotes-platform"
-GKE_CLUSTER = "overload-party"
+GKE_CLUSTER = "keyandnotes-shared"
 CLOUDSQL_INSTANCE = "overload-party-db"
 DEPLOYMENTS = ["gateway", "battle"]
 
