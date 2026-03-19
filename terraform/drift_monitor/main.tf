@@ -56,6 +56,14 @@ resource "google_project_iam_member" "viewer" {
   member   = "serviceAccount:${google_service_account.drift_monitor.email}"
 }
 
+# バケット IAM ポリシーの読み取り（google_storage_bucket_iam_member の plan に必要）
+resource "google_project_iam_member" "security_reviewer" {
+  for_each = toset(local.monitored_projects)
+  project  = each.value
+  role     = "roles/iam.securityReviewer"
+  member   = "serviceAccount:${google_service_account.drift_monitor.email}"
+}
+
 # --- Cloud Run Job ---
 
 resource "google_cloud_run_v2_job" "drift_monitor" {
