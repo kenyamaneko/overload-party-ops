@@ -31,7 +31,7 @@ async def handle(response_url: str, text: str) -> None:
             )
 
     except Exception:
-        logger.exception("Failed to dispatch publish-packages")
+        logger.exception("Failed to dispatch publish-gamedata-pkg")
         await post_in_channel(
             response_url,
             "パッケージ publish ワークフローのディスパッチに失敗しました。ログを確認してください。",

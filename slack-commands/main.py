@@ -4,7 +4,7 @@ from urllib.parse import parse_qs
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Response
 
-from routers import db_control, gke_control, open_issues, publish_packages
+from routers import db_control, gke_control, open_issues, publish_gamedata_pkg
 from adapters.slack_verify import verify_slack_request
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -19,7 +19,7 @@ COMMANDS: dict[str, CommandHandler] = {
     "/db-stop": db_control.handle_stop,
     "/gke-up": gke_control.handle_up,
     "/gke-down": gke_control.handle_down,
-    "/publish-packages": publish_packages.handle,
+    "/publish-gamedata-pkg": publish_gamedata_pkg.handle,
 }
 
 
