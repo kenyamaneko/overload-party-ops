@@ -54,6 +54,7 @@ async def fetch_open_issues(
 
 async def dispatch_workflow(
     org: str, repo: str, workflow_id: str, inputs: dict[str, str],
+    *, ref: str = "main",
 ) -> bool:
     """GitHub Actions の workflow_dispatch イベントをトリガーする。"""
     if not GITHUB_TOKEN:
@@ -65,7 +66,7 @@ async def dispatch_workflow(
         "Accept": "application/vnd.github+json",
         "Authorization": f"Bearer {GITHUB_TOKEN}",
     }
-    body = {"ref": "main", "inputs": inputs}
+    body = {"ref": ref, "inputs": inputs}
 
     async with httpx.AsyncClient() as client:
         try:
