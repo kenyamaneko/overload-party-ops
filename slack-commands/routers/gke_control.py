@@ -29,14 +29,14 @@ async def handle_up(response_url: str, text: str) -> None:
             await post_in_channel(response_url, f"未対応の環境です: `{env}` (dev, stg のみ)")
             return
 
-        ok = await dispatch_workflow(
+        error = await dispatch_workflow(
             GITHUB_ORG, K8S_REPO, WORKFLOW_ID,
             {"action": "up", "environment": env, "slack_notification": "true"},
         )
-        if ok:
+        if error is None:
             await post_in_channel(response_url, f":rocket: `{env}` の GKE 起動ワークフローをディスパッチしました。完了時に通知されます。")
         else:
-            await post_in_channel(response_url, ":warning: GKE 起動ワークフローのディスパッチに失敗しました。ログを確認してください。")
+            await post_in_channel(response_url, f":warning: GKE 起動ワークフローのディスパッチに失敗しました。\n```{error}```")
 
     except Exception:
         logger.exception("Failed to dispatch gke-up")
@@ -54,14 +54,14 @@ async def handle_down(response_url: str, text: str) -> None:
             await post_in_channel(response_url, f"未対応の環境です: `{env}` (dev, stg のみ)")
             return
 
-        ok = await dispatch_workflow(
+        error = await dispatch_workflow(
             GITHUB_ORG, K8S_REPO, WORKFLOW_ID,
             {"action": "down", "environment": env, "slack_notification": "true"},
         )
-        if ok:
+        if error is None:
             await post_in_channel(response_url, f":rocket: `{env}` の GKE 停止ワークフローをディスパッチしました。完了時に通知されます。")
         else:
-            await post_in_channel(response_url, ":warning: GKE 停止ワークフローのディスパッチに失敗しました。ログを確認してください。")
+            await post_in_channel(response_url, f":warning: GKE 停止ワークフローのディスパッチに失敗しました。\n```{error}```")
 
     except Exception:
         logger.exception("Failed to dispatch gke-down")

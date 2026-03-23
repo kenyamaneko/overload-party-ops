@@ -15,11 +15,11 @@ async def handle(response_url: str, text: str) -> None:
     try:
         ref = text.strip() or DEFAULT_REF
 
-        ok = await dispatch_workflow(
+        error = await dispatch_workflow(
             GITHUB_ORG, COMMON_REPO, WORKFLOW_ID, {},
             ref=ref,
         )
-        if ok:
+        if error is None:
             await post_in_channel(
                 response_url,
                 f"`{COMMON_REPO}` の `{ref}` ブランチからパッケージ publish ワークフローをディスパッチしました。",
@@ -27,7 +27,7 @@ async def handle(response_url: str, text: str) -> None:
         else:
             await post_in_channel(
                 response_url,
-                "パッケージ publish ワークフローのディスパッチに失敗しました。ログを確認してください。",
+                f"パッケージ publish ワークフローのディスパッチに失敗しました。\n```{error}```",
             )
 
     except Exception:

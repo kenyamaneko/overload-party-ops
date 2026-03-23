@@ -55,11 +55,14 @@ async def fetch_open_issues(
 async def dispatch_workflow(
     org: str, repo: str, workflow_id: str, inputs: dict[str, str],
     *, ref: str = "main",
-) -> bool:
-    """GitHub Actions の workflow_dispatch イベントをトリガーする。"""
+) -> str | None:
+    """GitHub Actions の workflow_dispatch イベントをトリガーする。
+
+    成功時は None、失敗時はエラー詳細の文字列を返す。
+    """
     if not GITHUB_TOKEN:
         logger.error("GITHUB_TOKEN is not configured")
-        return False
+        return "GITHUB_TOKEN が未設定です"
 
     url = f"{GITHUB_API}/repos/{org}/{repo}/actions/workflows/{workflow_id}/dispatches"
     headers = {
@@ -73,9 +76,9 @@ async def dispatch_workflow(
             resp = await client.post(url, json=body, headers=headers, timeout=10)
         except httpx.HTTPError as e:
             logger.error("GitHub API error: %s", e)
-            return False
+            return f"GitHub API リクエスト失敗: {e}"
 
     if resp.status_code == 204:
-        return True
+        return None
     logger.warning("workflow_dispatch failed %s: %s", resp.status_code, resp.text)
-    return False
+    return f"GitHub API HTTP {resp.status_code}: {resp.text}"
