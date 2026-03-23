@@ -15,9 +15,9 @@ variable "image" {
 }
 
 variable "github_token_secret" {
-  description = "Secret Manager secret name for GitHub token"
+  description = "Secret Manager secret name for GITHUB_TOKEN"
   type        = string
-  default     = "github-token"
+  default     = "github-pat-ro"
 }
 
 variable "tf_state_bucket" {

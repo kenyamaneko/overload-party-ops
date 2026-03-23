@@ -35,7 +35,7 @@ resource "google_secret_manager_secret_iam_member" "slack_signing_secret" {
   member    = "serviceAccount:${google_service_account.slack_commands.email}"
 }
 
-# github-token, slack-webhook-url は shared/ で管理。accessors リストへの追加が必要。
+# github-pat-ro, github-pat-rw, slack-webhook-url は shared/ で管理。accessors リストへの追加が必要。
 
 # Cloud SQL 操作に必要（dev/stg プロジェクト）
 resource "google_project_iam_member" "cloudsql_admin" {

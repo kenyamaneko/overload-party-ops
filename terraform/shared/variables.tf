@@ -9,8 +9,13 @@ variable "region" {
   default     = "asia-northeast1"
 }
 
-variable "github_token_accessors" {
-  description = "github-token Secret にアクセスする SA の member 文字列リスト"
+variable "github_pat_ro_accessors" {
+  description = "github-pat-ro Secret にアクセスする SA の member 文字列リスト"
+  type        = list(string)
+}
+
+variable "github_pat_rw_accessors" {
+  description = "github-pat-rw Secret にアクセスする SA の member 文字列リスト"
   type        = list(string)
 }
 

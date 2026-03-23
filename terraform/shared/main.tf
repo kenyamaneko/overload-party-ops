@@ -12,19 +12,36 @@ provider "google" {
   region  = var.region
 }
 
-# --- 共有 Secret: github-token ---
+# --- 共有 Secret: github-pat-ro (read-only PAT) ---
 
-resource "google_secret_manager_secret" "github_token" {
-  secret_id = "github-token"
+resource "google_secret_manager_secret" "github_pat_ro" {
+  secret_id = "github-pat-ro"
 
   replication {
     auto {}
   }
 }
 
-resource "google_secret_manager_secret_iam_member" "github_token" {
-  for_each  = toset(var.github_token_accessors)
-  secret_id = google_secret_manager_secret.github_token.secret_id
+resource "google_secret_manager_secret_iam_member" "github_pat_ro" {
+  for_each  = toset(var.github_pat_ro_accessors)
+  secret_id = google_secret_manager_secret.github_pat_ro.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = each.value
+}
+
+# --- 共有 Secret: github-pat-rw (read-write PAT) ---
+
+resource "google_secret_manager_secret" "github_pat_rw" {
+  secret_id = "github-pat-rw"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_iam_member" "github_pat_rw" {
+  for_each  = toset(var.github_pat_rw_accessors)
+  secret_id = google_secret_manager_secret.github_pat_rw.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = each.value
 }
