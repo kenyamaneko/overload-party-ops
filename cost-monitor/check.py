@@ -35,6 +35,10 @@ def load_environments() -> dict[str, str]:
     return json.loads(raw)
 
 
+class CommandError(Exception):
+    pass
+
+
 def _run_cmd(
     cmd: list[str], *, label: str = "cmd", allow_not_found: bool = False,
 ) -> str:
@@ -42,8 +46,10 @@ def _run_cmd(
     if result.returncode != 0 and result.stderr.strip():
         if allow_not_found and _is_not_found(result.stderr):
             log(f"[{label}] {result.stderr.strip()}", severity="DEBUG")
-        else:
-            log(f"[{label}] {result.stderr.strip()}", severity="ERROR")
+            return ""
+        msg = f"[{label}] {result.stderr.strip()}"
+        log(msg, severity="ERROR")
+        raise CommandError(msg)
     return result.stdout.strip()
 
 
@@ -72,10 +78,13 @@ def setup_gke_credentials() -> bool:
 
 
 def check_cloudsql(project: str) -> list[str]:
-    state = gcloud_value(
-        "sql", "instances", "describe", CLOUDSQL_INSTANCE,
-        "--project", project, "--format=value(state)",
-    )
+    try:
+        state = gcloud_value(
+            "sql", "instances", "describe", CLOUDSQL_INSTANCE,
+            "--project", project, "--format=value(state)",
+        )
+    except CommandError as e:
+        return [f":x: Cloud SQL チェック失敗: {e}"]
     if state == "RUNNABLE":
         return [f"Cloud SQL `{CLOUDSQL_INSTANCE}` が RUNNABLE ($0.19/hr)"]
     return []
@@ -84,11 +93,15 @@ def check_cloudsql(project: str) -> list[str]:
 def check_gke_deployments(env: str) -> list[str]:
     findings: list[str] = []
     for deploy in DEPLOYMENTS:
-        raw = kubectl_json(
-            "get", "deployment", deploy,
-            "-n", env,
-            f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}",
-        )
+        try:
+            raw = kubectl_json(
+                "get", "deployment", deploy,
+                "-n", env,
+                f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}",
+            )
+        except CommandError as e:
+            findings.append(f":x: Deployment `{deploy}` チェック失敗: {e}")
+            continue
         if not raw:
             continue
         try:
@@ -96,18 +109,21 @@ def check_gke_deployments(env: str) -> list[str]:
             replicas = spec.get("spec", {}).get("replicas", 0)
             if replicas > 0:
                 findings.append(f"Deployment `{deploy}` が {replicas} レプリカ稼働中")
-        except json.JSONDecodeError:
-            log(f"Failed to parse deployment JSON for {deploy}", severity="WARNING")
+        except json.JSONDecodeError as e:
+            findings.append(f":x: Deployment `{deploy}` JSON パース失敗: {e}")
     return findings
 
 
 def check_ingress(env: str) -> list[str]:
-    raw = kubectl_json(
-        "get", "ingress", "overload-party",
-        "-n", env,
-        f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}",
-        allow_not_found=True,
-    )
+    try:
+        raw = kubectl_json(
+            "get", "ingress", "overload-party",
+            "-n", env,
+            f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}",
+            allow_not_found=True,
+        )
+    except CommandError as e:
+        return [f":x: Ingress チェック失敗: {e}"]
     if not raw:
         return []
     try:
@@ -116,23 +132,25 @@ def check_ingress(env: str) -> list[str]:
         if ip_list:
             ip = ip_list[0].get("ip", "unknown")
             return [f"Ingress `overload-party` が稼働中 (IP: {ip}, ~$0.025/hr)"]
-    except json.JSONDecodeError:
-        log("Failed to parse ingress JSON", severity="WARNING")
+    except json.JSONDecodeError as e:
+        return [f":x: Ingress JSON パース失敗: {e}"]
     return []
 
 
 def check_static_ips(project: str) -> list[str]:
     findings: list[str] = []
-    raw = gcloud(
-        "compute", "addresses", "list",
-        "--project", project,
-        "--filter", "status=RESERVED AND addressType=EXTERNAL",
-    )
+    try:
+        raw = gcloud(
+            "compute", "addresses", "list",
+            "--project", project,
+            "--filter", "status=RESERVED AND addressType=EXTERNAL",
+        )
+    except CommandError as e:
+        return [f":x: 外部 IP チェック失敗: {e}"]
     try:
         addresses = json.loads(raw) if raw else []
-    except json.JSONDecodeError:
-        log("Failed to parse static IPs JSON", severity="WARNING")
-        addresses = []
+    except json.JSONDecodeError as e:
+        return [f":x: 外部 IP JSON パース失敗: {e}"]
     for addr in addresses:
         name = addr.get("name", "unknown")
         ip = addr.get("address", "unknown")
@@ -142,16 +160,18 @@ def check_static_ips(project: str) -> list[str]:
 
 def check_psc(project: str) -> list[str]:
     findings: list[str] = []
-    raw = gcloud(
-        "compute", "forwarding-rules", "list",
-        "--project", project,
-        "--filter", "target~serviceAttachments",
-    )
+    try:
+        raw = gcloud(
+            "compute", "forwarding-rules", "list",
+            "--project", project,
+            "--filter", "target~serviceAttachments",
+        )
+    except CommandError as e:
+        return [f":x: PSC チェック失敗: {e}"]
     try:
         rules = json.loads(raw) if raw else []
-    except json.JSONDecodeError:
-        log("Failed to parse PSC forwarding rules JSON", severity="WARNING")
-        rules = []
+    except json.JSONDecodeError as e:
+        return [f":x: PSC JSON パース失敗: {e}"]
     for rule in rules:
         name = rule.get("name", "unknown")
         findings.append(f"PSC forwarding rule `{name}` が稼働中")

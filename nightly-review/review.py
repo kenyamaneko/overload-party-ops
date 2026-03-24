@@ -52,18 +52,27 @@ DIFF_PROMPT = (
 )
 
 
+class GhError(Exception):
+    pass
+
+
 def gh(*args: str) -> str:
     result = subprocess.run(
         ["gh", *args],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        print(f"  Warning: gh {args[0]} failed: {result.stderr.strip()}")
+        msg = f"gh {args[0]} failed: {result.stderr.strip()}"
+        print(f"  Error: {msg}")
+        raise GhError(msg)
     return result.stdout.strip()
 
 
 def ensure_label(repo: str, label: str) -> None:
-    existing = gh("label", "list", "--repo", f"{GITHUB_ORG}/{repo}", "--search", label)
+    try:
+        existing = gh("label", "list", "--repo", f"{GITHUB_ORG}/{repo}", "--search", label)
+    except GhError:
+        existing = ""
     if label not in existing:
         result = subprocess.run(
             ["gh", "label", "create", label,
@@ -77,14 +86,17 @@ def ensure_label(repo: str, label: str) -> None:
 
 
 def issue_exists(repo: str, search_key: str) -> bool:
-    output = gh(
-        "issue", "list",
-        "--repo", f"{GITHUB_ORG}/{repo}",
-        "--search", f'in:title "{search_key}"',
-        "--state", "open",
-        "--json", "number",
-        "--jq", "length",
-    )
+    try:
+        output = gh(
+            "issue", "list",
+            "--repo", f"{GITHUB_ORG}/{repo}",
+            "--search", f'in:title "{search_key}"',
+            "--state", "open",
+            "--json", "number",
+            "--jq", "length",
+        )
+    except GhError:
+        return False
     return output.isdigit() and int(output) > 0
 
 
@@ -211,7 +223,11 @@ def main() -> None:
 
         ensure_label(repo, label)
 
-        body = review_diff(repo, yesterday)
+        try:
+            body = review_diff(repo, yesterday)
+        except GhError:
+            has_error = True
+            continue
 
         if body is None:
             continue
