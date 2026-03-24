@@ -73,7 +73,7 @@ slack-commands/          # Slack スラッシュコマンド（Cloud Run Service
   adapters/              # 外部サービス連携（GitHub API, Slack 署名検証）
   routers/               # コマンドハンドラ（open_reviews 等）
 terraform/
-  shared/                # 複数ジョブで共有する Secret（github-pat-ro, github-pat-rw）と IAM
+  shared/                # 複数ジョブで共有する Secret（github-pat-nightly-review, github-pat-slack-commands）と IAM
     main.tf
     variables.tf
   nightly_review/        # Cloud Run Job + Cloud Scheduler + SA + IAM
@@ -151,7 +151,7 @@ make help
 
 ```bash
 cd terraform/shared
-terraform apply    # github-pat-ro, github-pat-rw の accessors に SA を追加
+terraform apply    # github-pat-nightly-review, github-pat-slack-commands の accessors に SA を追加
 
 cd ../slack_commands
 terraform init

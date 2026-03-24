@@ -23,7 +23,7 @@ variable "anthropic_api_key_secret" {
 variable "github_token_secret" {
   description = "Secret Manager secret name for GITHUB_TOKEN"
   type        = string
-  default     = "github-pat-ro"
+  default     = "github-pat-nightly-review"
 }
 
 variable "repos" {

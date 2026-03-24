@@ -12,7 +12,7 @@ Claude Code を使った夜間自動レビューシステム。Cloud Scheduler +
 
 ```bash
 echo -n "sk-ant-..." | gcloud secrets create anthropic-api-key --data-file=-
-echo -n "ghp_..." | gcloud secrets create github-pat-ro --data-file=-
+echo -n "ghp_..." | gcloud secrets create github-pat-nightly-review --data-file=-
 echo -n "https://hooks.slack.com/..." | gcloud secrets create slack-webhook-nightly-review --data-file=-
 ```
 

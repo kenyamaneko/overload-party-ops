@@ -12,36 +12,36 @@ provider "google" {
   region  = var.region
 }
 
-# --- 共有 Secret: github-pat-ro (read-only PAT) ---
+# --- 共有 Secret: github-pat-nightly-review ---
 
-resource "google_secret_manager_secret" "github_pat_ro" {
-  secret_id = "github-pat-ro"
+resource "google_secret_manager_secret" "github_pat_nightly_review" {
+  secret_id = "github-pat-nightly-review"
 
   replication {
     auto {}
   }
 }
 
-resource "google_secret_manager_secret_iam_member" "github_pat_ro" {
-  for_each  = toset(var.github_pat_ro_accessors)
-  secret_id = google_secret_manager_secret.github_pat_ro.secret_id
+resource "google_secret_manager_secret_iam_member" "github_pat_nightly_review" {
+  for_each  = toset(var.github_pat_nightly_review_accessors)
+  secret_id = google_secret_manager_secret.github_pat_nightly_review.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = each.value
 }
 
-# --- 共有 Secret: github-pat-rw (read-write PAT) ---
+# --- 共有 Secret: github-pat-slack-commands ---
 
-resource "google_secret_manager_secret" "github_pat_rw" {
-  secret_id = "github-pat-rw"
+resource "google_secret_manager_secret" "github_pat_slack_commands" {
+  secret_id = "github-pat-slack-commands"
 
   replication {
     auto {}
   }
 }
 
-resource "google_secret_manager_secret_iam_member" "github_pat_rw" {
-  for_each  = toset(var.github_pat_rw_accessors)
-  secret_id = google_secret_manager_secret.github_pat_rw.secret_id
+resource "google_secret_manager_secret_iam_member" "github_pat_slack_commands" {
+  for_each  = toset(var.github_pat_slack_commands_accessors)
+  secret_id = google_secret_manager_secret.github_pat_slack_commands.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = each.value
 }

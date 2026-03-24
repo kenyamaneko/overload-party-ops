@@ -17,7 +17,7 @@ variable "image" {
 variable "github_token_secret" {
   description = "Secret Manager secret name for GitHub token"
   type        = string
-  default     = "github-pat-rw"
+  default     = "github-pat-slack-commands"
 }
 
 variable "slack_signing_secret" {
