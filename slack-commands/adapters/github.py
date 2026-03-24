@@ -18,9 +18,15 @@ class Issue:
     html_url: str
 
 
+@dataclass(frozen=True)
+class FetchResult:
+    issues: list[Issue]
+    error: str | None = None
+
+
 async def _fetch_issues(
     client: httpx.AsyncClient, org: str, repo: str,
-) -> list[Issue]:
+) -> FetchResult:
     url = f"{GITHUB_API}/repos/{org}/{repo}/issues"
     params = {"state": "open", "per_page": "100"}
     try:
@@ -28,18 +34,25 @@ async def _fetch_issues(
         resp.raise_for_status()
     except httpx.HTTPError as e:
         logger.warning("GitHub API error for %s/%s: %s", org, repo, e)
-        return []
+        return FetchResult(issues=[], error=str(e))
 
-    return [
+    issues = [
         Issue(number=item["number"], title=item["title"], html_url=item["html_url"])
         for item in resp.json()
         if "pull_request" not in item
     ]
+    return FetchResult(issues=issues)
+
+
+@dataclass(frozen=True)
+class OpenIssuesResult:
+    issues_by_repo: dict[str, list[Issue]]
+    failed_repos: dict[str, str]
 
 
 async def fetch_open_issues(
     org: str, repos: list[str],
-) -> dict[str, list[Issue]]:
+) -> OpenIssuesResult:
     """全リポジトリの未クローズ Issue を並列取得する。"""
     headers = {"Accept": "application/vnd.github+json"}
     if GITHUB_TOKEN:
@@ -49,7 +62,15 @@ async def fetch_open_issues(
         tasks = [_fetch_issues(client, org, repo) for repo in repos]
         results = await asyncio.gather(*tasks)
 
-    return {repo: issues for repo, issues in zip(repos, results) if issues}
+    issues_by_repo = {}
+    failed_repos = {}
+    for repo, result in zip(repos, results):
+        if result.error:
+            failed_repos[repo] = result.error
+        elif result.issues:
+            issues_by_repo[repo] = result.issues
+
+    return OpenIssuesResult(issues_by_repo=issues_by_repo, failed_repos=failed_repos)
 
 
 async def dispatch_workflow(
