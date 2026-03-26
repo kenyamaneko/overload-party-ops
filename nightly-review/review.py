@@ -71,7 +71,8 @@ def gh(*args: str) -> str:
 def ensure_label(repo: str, label: str) -> None:
     try:
         existing = gh("label", "list", "--repo", f"{GITHUB_ORG}/{repo}", "--search", label)
-    except GhError:
+    except GhError as e:
+        print(f"  Warning: failed to list labels for {repo}: {e}")
         existing = ""
     if label not in existing:
         result = subprocess.run(
