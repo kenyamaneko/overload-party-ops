@@ -82,9 +82,12 @@ def check_cloudsql(project: str) -> list[str]:
         state = gcloud_value(
             "sql", "instances", "describe", CLOUDSQL_INSTANCE,
             "--project", project, "--format=value(state)",
+            allow_not_found=True,
         )
     except CommandError as e:
         return [f":x: Cloud SQL チェック失敗: {e}"]
+    if not state:
+        return [f"Cloud SQL `{CLOUDSQL_INSTANCE}` は未作成のためスキップ"]
     if state == "RUNNABLE":
         return [f"Cloud SQL `{CLOUDSQL_INSTANCE}` が RUNNABLE ($0.19/hr)"]
     return []
@@ -220,6 +223,7 @@ def main() -> None:
     jst = timezone(timedelta(hours=9))
     today = datetime.now(jst).strftime("%Y-%m-%d")
 
+    # Secret Manager → Cloud Run 環境変数として注入（Terraform: cost_monitor/main.tf）
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
         log("SLACK_WEBHOOK_URL is not set", severity="ERROR")

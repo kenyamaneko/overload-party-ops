@@ -6,6 +6,7 @@ import time
 from fastapi import HTTPException, Request
 
 
+# Secret Manager → Cloud Run 環境変数として注入（Terraform: slack_commands/main.tf）
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
 _MAX_AGE_SECONDS = 5 * 60
 

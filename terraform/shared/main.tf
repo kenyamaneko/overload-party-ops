@@ -12,6 +12,23 @@ provider "google" {
   region  = var.region
 }
 
+# --- APIs (keyandnotes-ops プロジェクト共通) ---
+
+resource "google_project_service" "secretmanager" {
+  service            = "secretmanager.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "run" {
+  service            = "run.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "cloudscheduler" {
+  service            = "cloudscheduler.googleapis.com"
+  disable_on_destroy = false
+}
+
 # --- 共有 Secret: github-pat-nightly-review ---
 
 resource "google_secret_manager_secret" "github_pat_nightly_review" {

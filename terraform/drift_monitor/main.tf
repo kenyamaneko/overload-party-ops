@@ -12,6 +12,18 @@ provider "google" {
   region  = var.region
 }
 
+# drift-monitor が overload-party-infra の plan を実行する際、
+# 呼び出し元プロジェクト (keyandnotes-ops) でも API が有効である必要がある
+resource "google_project_service" "firebase" {
+  service            = "firebase.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "firebase_hosting" {
+  service            = "firebasehosting.googleapis.com"
+  disable_on_destroy = false
+}
+
 locals {
   monitored_projects = distinct(flatten([
     for t in var.targets : [for e in t.environments : e.project]

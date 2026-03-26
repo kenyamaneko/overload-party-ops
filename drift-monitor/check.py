@@ -46,7 +46,7 @@ def terraform_plan(work_dir: str) -> tuple[int, str]:
     """
     init = run(["terraform", "init", "-no-color", "-input=false"], cwd=work_dir, timeout=120)
     if init.returncode != 0:
-        return 1, init.stderr.strip()
+        return 1, init.stderr.strip() or init.stdout.strip()
 
     plan = run(
         ["terraform", "plan", "-no-color", "-input=false", "-detailed-exitcode", "-lock=false"],
@@ -106,6 +106,7 @@ def main() -> None:
     jst = timezone(timedelta(hours=9))
     today = datetime.now(jst).strftime("%Y-%m-%d")
 
+    # Secret Manager → Cloud Run 環境変数として注入（Terraform: drift_monitor/main.tf）
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
         print("Error: GITHUB_TOKEN is not set", file=sys.stderr)
