@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -8,7 +9,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 GITHUB_ORG = "kenyamaneko"
-MAX_DIFF_CHARS = 50000
+MAX_DIFF_CHARS = 150000
 
 DEFAULT_REPOS = [
     "overload-party-common",
@@ -141,6 +142,33 @@ def run_claude(prompt: str) -> str | None:
     return body if body else None
 
 
+def truncate_diff(diff: str, limit: int) -> tuple[str, list[str]]:
+    """差分をファイル単位で切り捨てる。
+
+    Returns:
+        (収まった差分テキスト, 切り捨てられたファイル名リスト)
+    """
+    if len(diff) <= limit:
+        return diff, []
+
+    file_sections = re.split(r"(?=^=== .+ ===$)", diff, flags=re.MULTILINE)
+    kept: list[str] = []
+    omitted: list[str] = []
+    total = 0
+
+    for section in file_sections:
+        if not section:
+            continue
+        if total + len(section) > limit and kept:
+            m = re.match(r"^=== (.+) ===$", section, re.MULTILINE)
+            omitted.append(m.group(1) if m else "(unknown)")
+        else:
+            kept.append(section)
+            total += len(section)
+
+    return "".join(kept), omitted
+
+
 def review_diff(repo: str, yesterday: str) -> str | None:
     since = f"{yesterday}T00:00:00Z"
     diff = get_diff(repo, since)
@@ -148,10 +176,13 @@ def review_diff(repo: str, yesterday: str) -> str | None:
         print(f"  No changes since {yesterday}, skipping.")
         return None
 
-    truncated = len(diff) >= MAX_DIFF_CHARS
-    diff = diff[:MAX_DIFF_CHARS]
+    diff, omitted = truncate_diff(diff, MAX_DIFF_CHARS)
 
-    note = "（注：差分が大きいため一部のみ表示）" if truncated else ""
+    note = ""
+    if omitted:
+        files = ", ".join(omitted)
+        note = f"（注：差分が大きいため以下のファイルは省略されています: {files}）"
+
     prompt = f"{DIFF_PROMPT}{note}\n\n```diff\n{diff}\n```"
     return run_claude(prompt)
 
