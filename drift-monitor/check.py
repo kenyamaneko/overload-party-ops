@@ -61,6 +61,26 @@ def terraform_plan(work_dir: str) -> tuple[int, str]:
     return 0, output
 
 
+def _strip_init_noise(output: str) -> str:
+    """terraform init のボイラープレート行を除去して本質的な出力だけ返す。"""
+    noise_prefixes = (
+        "Initializing the backend",
+        "Successfully configured the backend",
+        "Initializing provider plugins",
+        "- Reusing previous version",
+        "- Using previously-installed",
+        "- Installing ",
+        "- Installed ",
+        "Terraform has been successfully initialized",
+        "use this backend unless",
+    )
+    lines = [
+        line for line in output.splitlines()
+        if line.strip() and not any(line.strip().startswith(p) for p in noise_prefixes)
+    ]
+    return "\n".join(lines)
+
+
 def extract_summary(plan_output: str) -> str:
     """plan 出力から Plan: 行と変更対象リソースを抽出する。"""
     resources: list[str] = []
@@ -88,7 +108,12 @@ def extract_summary(plan_output: str) -> str:
     return "\n".join(last_lines)
 
 
+SLACK_TEXT_LIMIT = 3900
+
+
 def notify_slack(webhook_url: str, message: str) -> None:
+    if len(message) > SLACK_TEXT_LIMIT:
+        message = message[:SLACK_TEXT_LIMIT] + "\n…(truncated)"
     payload = json.dumps({"text": message}).encode()
     req = urllib.request.Request(
         webhook_url,
@@ -156,8 +181,9 @@ def main() -> None:
                 print(f"DRIFT DETECTED:\n{summary}")
                 drifts.append({"label": label, "summary": summary})
             else:
-                print(f"error: {output[:200]}")
-                errors.append({"repo": repo, "env": env_name, "detail": output[:200]})
+                cleaned = _strip_init_noise(output)
+                print(f"error: {cleaned}")
+                errors.append({"repo": repo, "env": env_name, "detail": cleaned})
 
     if not drifts and not errors:
         print("\nAll clear — no drift detected.")

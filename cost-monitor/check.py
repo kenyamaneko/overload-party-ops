@@ -87,7 +87,7 @@ def check_cloudsql(project: str) -> list[str]:
     except CommandError as e:
         return [f":x: Cloud SQL チェック失敗: {e}"]
     if not state:
-        return [f"Cloud SQL `{CLOUDSQL_INSTANCE}` は未作成のためスキップ"]
+        return []
     if state == "RUNNABLE":
         return [f"Cloud SQL `{CLOUDSQL_INSTANCE}` が RUNNABLE ($0.19/hr)"]
     return []
@@ -248,7 +248,10 @@ def main() -> None:
             log("No cost-bearing resources detected.")
 
     if not all_findings:
-        log("All clear.")
+        message = f":white_check_mark: *[コスト確認 {today}] 稼働中リソースなし*"
+        log(message)
+        notify_slack(webhook_url, message)
+        log("Slack notification sent.")
         return
 
     lines = [f":warning: *[コスト警告 {today}] 稼働中リソースあり*", ""]
