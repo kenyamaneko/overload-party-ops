@@ -80,22 +80,22 @@ async def wait_for_operation(
     """Cloud SQL オペレーションが DONE になるまでポーリングする（最大15分）。"""
     url = f"{SQLADMIN_API}/projects/{project}/operations/{operation}"
 
-    for i in range(max_attempts):
-        token = await _get_access_token()
-        async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient() as client:
+        for i in range(max_attempts):
+            token = await _get_access_token()
             resp = await client.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
             resp.raise_for_status()
 
-        data = resp.json()
-        status = data.get("status", "")
-        logger.info("[poll %d/%d] operation=%s status=%s", i + 1, max_attempts, operation, status)
+            data = resp.json()
+            status = data.get("status", "")
+            logger.info("[poll %d/%d] operation=%s status=%s", i + 1, max_attempts, operation, status)
 
-        if status == "DONE":
-            if "error" in data:
-                logger.error("Operation failed: %s", data["error"])
-                return False
-            return True
+            if status == "DONE":
+                if "error" in data:
+                    logger.error("Operation failed: %s", data["error"])
+                    return False
+                return True
 
-        await asyncio.sleep(interval)
+            await asyncio.sleep(interval)
 
     return False
