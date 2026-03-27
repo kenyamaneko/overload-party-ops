@@ -14,8 +14,17 @@ provider "google" {
 
 # --- Secrets (枠のみ。バージョンは手動登録) ---
 
+# Slack Signing Secret は Cloudflare Worker 側で使用。Cloud Run からは参照しない。
 resource "google_secret_manager_secret" "slack_signing_secret" {
   secret_id = var.slack_signing_secret
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret" "dispatch_secret" {
+  secret_id = var.dispatch_secret
 
   replication {
     auto {}
@@ -29,8 +38,8 @@ resource "google_service_account" "slack_commands" {
   display_name = "Slack Commands Service SA"
 }
 
-resource "google_secret_manager_secret_iam_member" "slack_signing_secret" {
-  secret_id = google_secret_manager_secret.slack_signing_secret.secret_id
+resource "google_secret_manager_secret_iam_member" "dispatch_secret" {
+  secret_id = google_secret_manager_secret.dispatch_secret.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.slack_commands.email}"
 }
@@ -81,10 +90,10 @@ resource "google_cloud_run_v2_service" "slack_commands" {
         }
       }
       env {
-        name = "SLACK_SIGNING_SECRET"
+        name = "DISPATCH_SECRET"
         value_source {
           secret_key_ref {
-            secret  = var.slack_signing_secret
+            secret  = var.dispatch_secret
             version = "latest"
           }
         }
@@ -110,7 +119,7 @@ resource "google_cloud_run_v2_service" "slack_commands" {
   }
 }
 
-# Slack からの未認証リクエストを許可（認証は Signing Secret で行う）
+# Cloudflare Worker からの未認証リクエストを許可（認証は DISPATCH_SECRET で行う）
 resource "google_cloud_run_v2_service_iam_member" "allow_unauthenticated" {
   name     = google_cloud_run_v2_service.slack_commands.name
   location = var.region

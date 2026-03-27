@@ -26,6 +26,12 @@ variable "slack_signing_secret" {
   default     = "slack-signing-secret"
 }
 
+variable "dispatch_secret" {
+  description = "Secret Manager secret name for dispatch secret (Worker -> Cloud Run)"
+  type        = string
+  default     = "slack-commands-dispatch-secret"
+}
+
 variable "cloudsql_projects" {
   description = "Cloud SQL 操作を許可する GCP プロジェクト ID のリスト"
   type        = list(string)

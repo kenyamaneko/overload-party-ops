@@ -5,7 +5,8 @@ from urllib.parse import parse_qs
 from fastapi import BackgroundTasks, Depends, FastAPI, Response
 
 from routers import db_control, gke_control, open_issues, publish_gamedata_pkg
-from adapters.slack_verify import verify_slack_request
+from adapters.worker_auth import verify_dispatch_request
+from adapters.slack_response import post_in_channel
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 
@@ -31,7 +32,7 @@ async def health() -> dict:
 @app.post("/slack/commands")
 async def slack_commands(
     background_tasks: BackgroundTasks,
-    body: bytes = Depends(verify_slack_request),
+    body: bytes = Depends(verify_dispatch_request),
 ) -> Response:
     form = parse_qs(body.decode())
     command = form.get("command", [""])[0] if form.get("command") else ""
@@ -40,17 +41,19 @@ async def slack_commands(
 
     handler = COMMANDS.get(command)
     if handler is None:
-        return Response(
-            content=f"Unknown command: {command}",
-            media_type="text/plain",
-            status_code=200,
-        )
+        if response_url:
+            background_tasks.add_task(
+                post_in_channel, response_url, f"未対応のコマンドです: `{command}`",
+            )
+        return Response(content='{"status":"accepted"}', media_type="application/json", status_code=200)
 
     if response_url:
-        background_tasks.add_task(handler, response_url, text)
+        background_tasks.add_task(_run_handler, handler, response_url, text)
 
-    return Response(
-        content='{"response_type":"ephemeral","text":"処理中..."}',
-        media_type="application/json",
-        status_code=200,
-    )
+    return Response(content='{"status":"accepted"}', media_type="application/json", status_code=200)
+
+
+async def _run_handler(handler: CommandHandler, response_url: str, text: str) -> None:
+    """「処理を開始します...」を通知してからハンドラを実行する。"""
+    await post_in_channel(response_url, "処理を開始します...")
+    await handler(response_url, text)
