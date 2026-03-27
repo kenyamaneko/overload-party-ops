@@ -70,8 +70,12 @@ drift-monitor/           # Terraform drift 検出（Cloud Run Job）
 slack-commands/          # Slack スラッシュコマンド（Cloud Run Service）
   Dockerfile             # Python 3.12 + FastAPI
   main.py                # FastAPI アプリ、コマンドディスパッチ
-  adapters/              # 外部サービス連携（GitHub API, Slack 署名検証）
+  adapters/              # 外部サービス連携（GitHub API, Worker 認証）
   routers/               # コマンドハンドラ（open_reviews 等）
+slack-commands-worker/   # Cloudflare Worker（Slack 署名検証 + 即時応答）
+  src/index.ts           # リクエスト受付・署名検証・Cloud Run への転送
+  src/slack-verify.ts    # Slack 署名検証ロジック
+  wrangler.toml          # Cloudflare Worker 設定
 terraform/
   shared/                # 複数ジョブで共有する Secret（github-pat-nightly-review, github-pat-slack-commands）と IAM
     main.tf
@@ -95,6 +99,7 @@ terraform/
   cost-monitor.yaml          # cost-monitor のビルド・デプロイ
   drift-monitor.yaml         # drift-monitor のビルド・デプロイ
   slack-commands.yaml        # slack-commands のビルド・デプロイ
+  slack-commands-worker.yaml # slack-commands-worker のデプロイ (wrangler deploy)
   db-migrate.yaml            # 手動 dispatch: ビルド → push → Cloud Run Job 実行
   db-migrate-on-push.yaml    # 自動: common の push で dev に適用
 Makefile                     # ローカル開発用コマンド
@@ -111,6 +116,7 @@ Makefile                     # ローカル開発用コマンド
 | `cost-monitor` | `cost-monitor.yaml` | main push (`cost-monitor/**`) / 手動 dispatch |
 | `drift-monitor` | `drift-monitor.yaml` | main push (`drift-monitor/**`) / 手動 dispatch |
 | `slack-commands` | `slack-commands.yaml` | main push (`slack-commands/**`) / 手動 dispatch |
+| `slack-commands-worker` | `slack-commands-worker.yaml` | main push (`slack-commands-worker/**`) / 手動 dispatch |
 
 ## ローカル開発
 
