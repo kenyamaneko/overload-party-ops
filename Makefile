@@ -4,42 +4,47 @@ AR_REPO    := overload-party
 REGION     := asia-northeast1
 PROJECT    ?= keyandnotes-ops
 
-JOBS := db-migrate
-
 IMAGE_BASE = $(REGISTRY)/$(AR_PROJECT)/$(AR_REPO)
 
-CLOUD_RUN_JOBS_db-migrate     := db-migrate
-
-.PHONY: help build-all push-all
+.PHONY: help build-db-migrate push-db-migrate deploy-db-migrate \
+        build-slack-commands push-slack-commands deploy-service-slack-commands \
+        build-all push-all
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_%-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_%-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-build-%: ## Build Docker image (e.g. make build-cost-monitor)
-	docker build -t $(IMAGE_BASE)/$*:latest $*/
+# --- db-migrate (Cloud Run Job) ---
 
-push-%: build-% ## Build and push to Artifact Registry (e.g. make push-cost-monitor)
-	docker push $(IMAGE_BASE)/$*:latest
+build-db-migrate: ## Build db-migrate image
+	docker build -t $(IMAGE_BASE)/db-migrate:latest db-migrate/
 
-deploy-%: push-% ## Build, push, and update Cloud Run Job (e.g. make deploy-cost-monitor)
-	@for job in $(CLOUD_RUN_JOBS_$*); do \
-	  echo "Updating $${job}..."; \
-	  gcloud run jobs update $${job} \
-	    --region $(REGION) \
-	    --project $(PROJECT) \
-	    --image $(IMAGE_BASE)/$*:latest \
-	    --quiet; \
-	done
+push-db-migrate: build-db-migrate ## Build and push db-migrate image
+	docker push $(IMAGE_BASE)/db-migrate:latest
 
-SERVICES := slack-commands
-
-deploy-service-%: push-% ## Build, push, and update Cloud Run Service (e.g. make deploy-service-slack-commands)
-	gcloud run services update $* \
+deploy-db-migrate: push-db-migrate ## Build, push, and update db-migrate Cloud Run Job
+	gcloud run jobs update db-migrate \
 	  --region $(REGION) \
 	  --project $(PROJECT) \
-	  --image $(IMAGE_BASE)/$*:latest \
+	  --image $(IMAGE_BASE)/db-migrate:latest \
 	  --quiet
 
-build-all: $(addprefix build-,$(JOBS)) $(addprefix build-,$(SERVICES)) ## Build all images
+# --- slack-commands (Cloud Run Service) ---
 
-push-all: $(addprefix push-,$(JOBS)) $(addprefix push-,$(SERVICES)) ## Build and push all images
+build-slack-commands: ## Build slack-commands image
+	docker build -t $(IMAGE_BASE)/slack-commands:latest slack-commands/
+
+push-slack-commands: build-slack-commands ## Build and push slack-commands image
+	docker push $(IMAGE_BASE)/slack-commands:latest
+
+deploy-service-slack-commands: push-slack-commands ## Build, push, and update slack-commands Cloud Run Service
+	gcloud run services update slack-commands \
+	  --region $(REGION) \
+	  --project $(PROJECT) \
+	  --image $(IMAGE_BASE)/slack-commands:latest \
+	  --quiet
+
+# --- aggregate ---
+
+build-all: build-db-migrate build-slack-commands ## Build all images
+
+push-all: push-db-migrate push-slack-commands ## Build and push all images
