@@ -1,4 +1,4 @@
-name: Slack Commands
+name: "CD: Slack Commands"
 
 on:
   push:

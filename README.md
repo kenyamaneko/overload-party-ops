@@ -85,12 +85,13 @@ terraform/
 .github/workflows/
   build-deploy-service.yaml  # サービス共通ビルド・デプロイ (reusable workflow)
   nightly-review.yaml        # nightly-review の定時実行 + 手動実行
+  nightly-shutdown.yaml      # nightly-shutdown の定時実行 + 手動実行
   cost-monitor.yaml          # cost-monitor の定時実行 + 手動実行
   drift-monitor.yaml         # drift-monitor の定時実行 + 手動実行
+  db-migrate.yaml            # DB マイグレーション（common push で dev 自動 / 手動 dispatch）
   slack-commands.yaml        # slack-commands のビルド・デプロイ
   slack-commands-worker.yaml # slack-commands-worker のデプロイ (wrangler deploy)
-  db-migrate.yaml            # 手動 dispatch: ビルド → push → Cloud Run Job 実行
-  db-migrate-on-push.yaml    # 自動: common の push で dev に適用
+  build-deploy-service.yaml  # サービス共通ビルド・デプロイ (reusable)
 Makefile                     # ローカル開発用コマンド
 ```
 
@@ -109,7 +110,7 @@ Makefile                     # ローカル開発用コマンド
 
 | 名前 | ワークフロー | トリガー |
 |------|------------|---------|
-| `db-migrate` | `db-migrate-job.yaml` | workflow_call / common push（dev 自動） |
+| `db-migrate` | `db-migrate.yaml` | common push（dev 自動）/ 手動 dispatch |
 | `slack-commands` | `slack-commands.yaml` | main push (`slack-commands/**`) / 手動 dispatch |
 | `slack-commands-worker` | `slack-commands-worker.yaml` | main push (`slack-commands-worker/**`) / 手動 dispatch |
 

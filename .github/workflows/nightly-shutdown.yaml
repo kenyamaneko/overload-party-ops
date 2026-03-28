@@ -1,4 +1,4 @@
-name: Nightly Shutdown (dev/stg)
+name: Nightly Shutdown
 
 on:
   schedule:

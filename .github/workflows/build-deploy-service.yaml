@@ -1,5 +1,5 @@
 # ops サービス共通のビルド・デプロイ。caller workflow から workflow_call で呼び出す。
-name: Build and Deploy Service
+name: "CD: Build and Deploy Service"
 
 on:
   workflow_call:
