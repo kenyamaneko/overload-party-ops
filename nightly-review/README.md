@@ -6,25 +6,34 @@ Claude Code を使った夜間自動レビューシステム。GitHub Actions sc
 
 毎晩 3:00 (JST) に各リポジトリの前日との差分をレビューする。
 
+## 対象リポジトリの設定
+
+`repos.yaml` でリポジトリ名と対象ブランチを管理する。
+
+```yaml
+- name: overload-party-common
+  branch: main
+- name: overload-party-client
+  branch: main
+```
+
+- `branch` は必須。未設定のリポジトリはスキップされ、Slack にエラー通知される
+- `REPOS_JSON` 環境変数で同形式の JSON を渡すとオーバーライド可能
+
 ## セットアップ
 
-### 1. GitHub Secrets に登録
+ops リポジトリの Settings > Secrets and variables > Actions:
 
-ops リポジトリの Settings > Secrets and variables > Actions > Secrets:
-
-| 名前 | 値 |
-|------|-----|
-| `ANTHROPIC_API_KEY` | Anthropic API キー |
-| `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL |
-| `GITHUB_TOKEN` | 他リポの Issue を作成するため PAT が必要 |
-
-### 2. （任意）対象リポジトリの変更
-
-GitHub Actions variables の `REPOS_JSON` を変更する（JSON 配列形式）。省略時はワークフロー内のデフォルト値が使われる。
+| 種別 | 名前 | 値 |
+|------|------|-----|
+| Secret | `ANTHROPIC_API_KEY` | Anthropic API キー |
+| Secret | `GH_PAT_NIGHTLY_REVIEW` | 他リポの Issue を作成するための Fine-grained PAT |
+| Secret | `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL |
 
 ## Slack 通知
 
 - レビューコメントがある場合: Issue 作成後に Slack 通知
+- branch 未設定のリポ: 設定エラーとして Slack 通知
 - ジョブ失敗時: Slack 通知
 
 ## GitHub Issues
