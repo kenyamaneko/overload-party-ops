@@ -6,17 +6,16 @@ import subprocess
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import yaml
 
 REGION = "asia-northeast1"
 GKE_PROJECT = "keyandnotes-platform"
 GKE_CLUSTER = "keyandnotes-shared"
 CLOUDSQL_INSTANCE = "overload-party-db"
 DEPLOYMENTS = ["gateway", "battle"]
-
-
-def log(message: str, *, severity: str = "INFO") -> None:
-    """Cloud Logging 構造化ログ出力。"""
-    print(json.dumps({"message": message, "severity": severity}), flush=True)
+ENVIRONMENTS_YAML = Path(__file__).parent / "environments.yaml"
 
 
 def _is_not_found(stderr: str) -> bool:
@@ -24,15 +23,16 @@ def _is_not_found(stderr: str) -> bool:
 
 
 def load_environments() -> dict[str, str]:
-    """ENVIRONMENTS_JSON 環境変数から監視対象を読み込む。
+    """監視対象の環境一覧を読み込む。
 
-    Terraform 側で定義した environments 変数を jsonencode して渡す想定。
-    形式: {"dev": "overload-party-dev", "stg": "overload-party-stg"}
+    デフォルトは environments.yaml から読み込む。
+    ENVIRONMENTS_JSON 環境変数が設定されている場合はそちらを優先する。
     """
     raw = os.environ.get("ENVIRONMENTS_JSON", "")
-    if not raw:
-        return {}
-    return json.loads(raw)
+    if raw:
+        return json.loads(raw)
+    with open(ENVIRONMENTS_YAML) as f:
+        return yaml.safe_load(f)
 
 
 class CommandError(Exception):
@@ -45,10 +45,10 @@ def _run_cmd(
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0 and result.stderr.strip():
         if allow_not_found and _is_not_found(result.stderr):
-            log(f"[{label}] {result.stderr.strip()}", severity="DEBUG")
+            print(f"[{label}] {result.stderr.strip()}")
             return ""
         msg = f"[{label}] {result.stderr.strip()}"
-        log(msg, severity="ERROR")
+        print(msg)
         raise CommandError(msg)
     return result.stdout.strip()
 
@@ -72,7 +72,7 @@ def setup_gke_credentials() -> bool:
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        log(f"[gcloud] GKE credentials failed: {result.stderr.strip()}", severity="WARNING")
+        print(f"[gcloud] GKE credentials failed: {result.stderr.strip()}")
         return False
     return True
 
@@ -197,9 +197,9 @@ def check_environment(env: str, project: str, *, gke_available: bool = True) -> 
         findings.extend(check_gke_deployments(env))
         findings.extend(check_ingress(env))
     elif not gke_available:
-        log("GKE credentials unavailable, skipping GKE checks.", severity="WARNING")
+        print("GKE credentials unavailable, skipping GKE checks.")
     else:
-        log(f"Namespace '{env}' not found, skipping GKE checks.", severity="WARNING")
+        print(f"Namespace '{env}' not found, skipping GKE checks.")
     findings.extend(check_static_ips(project))
     findings.extend(check_psc(project))
     return findings
@@ -215,7 +215,7 @@ def notify_slack(webhook_url: str, message: str) -> None:
     try:
         urllib.request.urlopen(req)
     except Exception as e:
-        log(f"Slack notification failed: {e}", severity="ERROR")
+        print(f"Slack notification failed: {e}")
         sys.exit(1)
 
 
@@ -223,35 +223,35 @@ def main() -> None:
     jst = timezone(timedelta(hours=9))
     today = datetime.now(jst).strftime("%Y-%m-%d")
 
-    # Secret Manager → Cloud Run 環境変数として注入（Terraform: cost_monitor/main.tf）
+    # GitHub Actions secrets 経由で注入
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
-        log("SLACK_WEBHOOK_URL is not set", severity="ERROR")
+        print("SLACK_WEBHOOK_URL is not set")
         sys.exit(1)
 
     environments = load_environments()
     if not environments:
-        log("ENVIRONMENTS_JSON is not set or empty", severity="ERROR")
+        print("No environments loaded")
         sys.exit(1)
 
     gke_available = setup_gke_credentials()
     all_findings: dict[str, list[str]] = {}
 
     for env, project in environments.items():
-        log(f"=== Checking {env} ({project}) ===")
+        print(f"=== Checking {env} ({project}) ===")
         findings = check_environment(env, project, gke_available=gke_available)
         if findings:
             all_findings[env] = findings
             for f in findings:
-                log(f"  - {f}")
+                print(f"  - {f}")
         else:
-            log("No cost-bearing resources detected.")
+            print("No cost-bearing resources detected.")
 
     if not all_findings:
         message = f":white_check_mark: *[コスト確認 {today}] 稼働中リソースなし*"
-        log(message)
+        print(message)
         notify_slack(webhook_url, message)
-        log("Slack notification sent.")
+        print("Slack notification sent.")
         return
 
     lines = [f":warning: *[コスト警告 {today}] 稼働中リソースあり*", ""]
@@ -262,10 +262,10 @@ def main() -> None:
         lines.append("")
 
     message = "\n".join(lines)
-    log(message, severity="WARNING")
+    print(message)
 
     notify_slack(webhook_url, message)
-    log("Slack notification sent.")
+    print("Slack notification sent.")
 
 
 if __name__ == "__main__":

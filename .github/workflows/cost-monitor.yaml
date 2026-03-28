@@ -1,20 +1,50 @@
 name: Cost Monitor
 
 on:
-  push:
-    branches: [main]
-    paths: [cost-monitor/**]
+  schedule:
+    # 8:00 AM JST = 23:00 UTC (previous day)
+    - cron: "0 23 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write
 
+env:
+  GKE_CLUSTER: keyandnotes-shared
+  GKE_REGION: asia-northeast1
+  GKE_PROJECT: keyandnotes-platform
+
 jobs:
-  build-deploy:
-    uses: ./.github/workflows/build-deploy-job.yaml
-    with:
-      job_dir: cost-monitor
-      image_name: cost-monitor
-      cloud_run_jobs: cost-monitor
-    secrets: inherit
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup GKE credentials
+        continue-on-error: true
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_REGION }}
+          project_id: ${{ env.GKE_PROJECT }}
+
+      - name: Run cost check
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python3 cost-monitor/check.py

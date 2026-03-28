@@ -1,9 +1,9 @@
 name: Drift Monitor
 
 on:
-  push:
-    branches: [main]
-    paths: [drift-monitor/**]
+  schedule:
+    # 7:00 AM JST = 22:00 UTC (previous day)
+    - cron: "0 22 * * *"
   workflow_dispatch:
 
 permissions:
@@ -11,10 +11,33 @@ permissions:
   id-token: write
 
 jobs:
-  build-deploy:
-    uses: ./.github/workflows/build-deploy-job.yaml
-    with:
-      job_dir: drift-monitor
-      image_name: drift-monitor
-      cloud_run_jobs: drift-monitor
-    secrets: inherit
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Run drift check
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_NIGHTLY_REVIEW }}
+        run: python3 drift-monitor/check.py

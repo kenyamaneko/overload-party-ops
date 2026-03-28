@@ -6,21 +6,29 @@ import subprocess
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import yaml
+
+TARGETS_YAML = Path(__file__).parent / "targets.yaml"
 
 GITHUB_ORG = os.environ.get("GITHUB_ORG", "kenyamaneko")
 CLONE_BASE = "/tmp/drift-monitor"
 
 
 def load_targets() -> list[dict]:
-    """TARGETS_JSON 環境変数から監視対象を読み込む。
+    """監視対象を読み込む。
 
-    Terraform 側で定義した targets 変数を jsonencode して渡す想定。
-    各要素: {"repo": str, "environments": [{"name": str, "path": str, "project": str}]}
+    デフォルトは targets.yaml から読み込み、
+    TARGETS_JSON 環境変数が設定されている場合はそちらを優先する。
+    各要素: {"repo": str, "environments": [{"name": str, "path": str}]}
     """
     raw = os.environ.get("TARGETS_JSON", "")
-    if not raw:
-        return []
-    return json.loads(raw)
+    if raw:
+        return json.loads(raw)
+    if TARGETS_YAML.exists():
+        return yaml.safe_load(TARGETS_YAML.read_text())
+    return []
 
 
 def run(args: list[str], cwd: str | None = None, timeout: int = 600) -> subprocess.CompletedProcess:
@@ -131,7 +139,7 @@ def main() -> None:
     jst = timezone(timedelta(hours=9))
     today = datetime.now(jst).strftime("%Y-%m-%d")
 
-    # Secret Manager → Cloud Run 環境変数として注入（Terraform: drift_monitor/main.tf）
+    # GitHub Actions secrets 経由で注入
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
         print("Error: GITHUB_TOKEN is not set", file=sys.stderr)
@@ -144,7 +152,7 @@ def main() -> None:
 
     targets = load_targets()
     if not targets:
-        print("Error: TARGETS_JSON is not set or empty", file=sys.stderr)
+        print("Error: targets not found (targets.yaml or TARGETS_JSON)", file=sys.stderr)
         sys.exit(1)
 
     os.makedirs(CLONE_BASE, exist_ok=True)

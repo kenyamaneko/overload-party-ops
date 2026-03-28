@@ -60,12 +60,12 @@ db-migrate/              # DB マイグレーションジョブ
   schema_check.py        # 破壊的変更検出（DROP TABLE/COLUMN）
 nightly-review/          # 夜間自動レビュー（GitHub Actions schedule で実行）
   review.py              # メインスクリプト（差分レビュー・Issue 起票）
-cost-monitor/            # 環境コスト監視（Cloud Run Job）
-  Dockerfile             # gcloud SDK + kubectl イメージ
+cost-monitor/            # 環境コスト監視（GitHub Actions schedule で実行）
   check.py               # Cloud SQL, GKE, Ingress, IP, PSC チェック → Slack 通知
-drift-monitor/           # Terraform drift 検出（Cloud Run Job）
-  Dockerfile             # terraform + gcloud SDK + git イメージ
+  environments.yaml      # 監視対象環境（env → GCP project ID）
+drift-monitor/           # Terraform drift 検出（GitHub Actions schedule で実行）
   check.py               # 全リポの terraform plan → drift 検出 → Slack 通知
+  targets.yaml           # 監視対象リポ・環境
 slack-commands/          # Slack スラッシュコマンド（Cloud Run Service）
   Dockerfile             # Python 3.12 + FastAPI
   main.py                # FastAPI アプリ、コマンドディスパッチ
@@ -79,21 +79,20 @@ terraform/
   shared/                # 複数ジョブで共有する Secret（github-pat-nightly-review, github-pat-slack-commands）と IAM
     main.tf
     variables.tf
-  cost_monitor/          # Cloud Run Job + Cloud Scheduler + SA + IAM
+  cost_monitor/          # 旧 Cloud Run Job 環境（terraform apply で destroy 後に削除予定）
     main.tf
     variables.tf
-  drift_monitor/         # Cloud Run Job + Cloud Scheduler + SA + IAM
+  drift_monitor/         # 旧 Cloud Run Job 環境（terraform apply で destroy 後に削除予定）
     main.tf
     variables.tf
   slack_commands/        # Cloud Run Service + SA + IAM
     main.tf
     variables.tf
 .github/workflows/
-  build-deploy-job.yaml      # ジョブ共通ビルド・デプロイ (reusable workflow)
   build-deploy-service.yaml  # サービス共通ビルド・デプロイ (reusable workflow)
   nightly-review.yaml        # nightly-review の定時実行 + 手動実行
-  cost-monitor.yaml          # cost-monitor のビルド・デプロイ
-  drift-monitor.yaml         # drift-monitor のビルド・デプロイ
+  cost-monitor.yaml          # cost-monitor の定時実行 + 手動実行
+  drift-monitor.yaml         # drift-monitor の定時実行 + 手動実行
   slack-commands.yaml        # slack-commands のビルド・デプロイ
   slack-commands-worker.yaml # slack-commands-worker のデプロイ (wrangler deploy)
   db-migrate.yaml            # 手動 dispatch: ビルド → push → Cloud Run Job 実行
@@ -103,14 +102,20 @@ Makefile                     # ローカル開発用コマンド
 
 ## CI/CD
 
-各ジョブ・サービスのディレクトリ配下を変更して main に push すると、自動でイメージビルド → AR push → Cloud Run 更新が実行される。
+### 定時実行ジョブ（GitHub Actions schedule）
+
+| 名前 | ワークフロー | スケジュール |
+|------|------------|------------|
+| `nightly-review` | `nightly-review.yaml` | 毎日 3:00 JST |
+| `nightly-shutdown` | `nightly-shutdown.yaml` | 毎日 2:00 JST |
+| `cost-monitor` | `cost-monitor.yaml` | 毎日 8:00 JST |
+| `drift-monitor` | `drift-monitor.yaml` | 毎日 7:00 JST |
+
+### CD パイプライン（push → ビルド → デプロイ）
 
 | 名前 | ワークフロー | トリガー |
 |------|------------|---------|
-| `db-migrate` | `db-migrate.yaml` | 手動 dispatch / common push（dev 自動） |
-| `nightly-review` | `nightly-review.yaml` | 毎日 3:00 JST (schedule) / 手動 dispatch |
-| `cost-monitor` | `cost-monitor.yaml` | main push (`cost-monitor/**`) / 手動 dispatch |
-| `drift-monitor` | `drift-monitor.yaml` | main push (`drift-monitor/**`) / 手動 dispatch |
+| `db-migrate` | `db-migrate-job.yaml` | workflow_call / common push（dev 自動） |
 | `slack-commands` | `slack-commands.yaml` | main push (`slack-commands/**`) / 手動 dispatch |
 | `slack-commands-worker` | `slack-commands-worker.yaml` | main push (`slack-commands-worker/**`) / 手動 dispatch |
 
