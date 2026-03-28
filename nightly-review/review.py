@@ -7,26 +7,23 @@ import sys
 import tempfile
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import yaml
 
 GITHUB_ORG = "kenyamaneko"
 MAX_DIFF_CHARS = 150000
 
-DEFAULT_REPOS = [
-    "overload-party-common",
-    "overload-party-client",
-    "overload-party-battle",
-    "overload-party-gateway",
-    "overload-party-infra",
-    "overload-party-k8s",
-    "overload-party-newsfeed",
-    "overload-party-analytics",
-    "overload-party-ops",
-]
+REPOS_YAML = Path(__file__).parent / "repos.yaml"
 
 
-def load_repos() -> list[str]:
+def load_repos() -> list[dict]:
+    """リポジトリ設定を読み込む。各要素は {"name": str, "branch": str | None}。"""
     raw = os.environ.get("REPOS_JSON", "")
-    return json.loads(raw) if raw else DEFAULT_REPOS
+    if raw:
+        return json.loads(raw)
+    with open(REPOS_YAML) as f:
+        return yaml.safe_load(f)
 
 REVIEW_CRITERIA = (
     "以下の観点でレビューしてください。\n"
@@ -102,11 +99,9 @@ def issue_exists(repo: str, search_key: str) -> bool:
     return output.isdigit() and int(output) > 0
 
 
-# TODO: 現在は main ブランチのみ対象。ブランチ管理が整ったら
-#       オープンな PR やフィーチャーブランチも差分レビュー対象にする。
-def get_diff(repo: str, since: str) -> str | None:
+def get_diff(repo: str, branch: str, since: str) -> str | None:
     commits_json = gh(
-        "api", f"repos/{GITHUB_ORG}/{repo}/commits?sha=main&since={since}",
+        "api", f"repos/{GITHUB_ORG}/{repo}/commits?sha={branch}&since={since}",
         "-q", "length",
     )
     commit_count = int(commits_json) if commits_json.isdigit() else 0
@@ -114,7 +109,7 @@ def get_diff(repo: str, since: str) -> str | None:
         return None
 
     raw = gh(
-        "api", f"repos/{GITHUB_ORG}/{repo}/compare/main~{commit_count}...main",
+        "api", f"repos/{GITHUB_ORG}/{repo}/compare/{branch}~{commit_count}...{branch}",
         "--jq", '.files[] | select(.patch != null) | "=== \\(.filename) ===\\n\\(.patch)"',
     )
     return raw if raw else None
@@ -169,9 +164,9 @@ def truncate_diff(diff: str, limit: int) -> tuple[str, list[str]]:
     return "".join(kept), omitted
 
 
-def review_diff(repo: str, yesterday: str) -> str | None:
+def review_diff(repo: str, branch: str, yesterday: str) -> str | None:
     since = f"{yesterday}T00:00:00Z"
-    diff = get_diff(repo, since)
+    diff = get_diff(repo, branch, since)
     if diff is None:
         print(f"  No changes since {yesterday}, skipping.")
         return None
@@ -209,14 +204,14 @@ def is_no_issues(body: str) -> bool:
     return body.strip() == "LGTM"
 
 
-def notify_slack(title: str, issue_url: str) -> None:
+def notify_slack(title: str, body: str) -> None:
     # GitHub Actions secrets 経由で注入
     # 通知失敗はジョブ全体を止めるほどではないため Warning のみ出力して継続する
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
         return
 
-    text = f"*{title}*\nレビューコメントがあります\n{issue_url}"
+    text = f"*{title}*\n{body}"
     payload = json.dumps({"text": text})
 
     req = urllib.request.Request(
@@ -245,8 +240,17 @@ def main() -> None:
 
     repos = load_repos()
 
-    for repo in repos:
+    for entry in repos:
+        repo = entry["name"]
+        branch = entry.get("branch")
         print(f"=== {repo} ===")
+
+        if not branch:
+            msg = f"`{repo}`: branch が未設定のためスキップしました"
+            print(f"  {msg}")
+            notify_slack("Nightly Review 設定エラー", msg)
+            has_error = True
+            continue
 
         title = f"[自動レビュー {today}] 差分 {repo}"
 
@@ -257,7 +261,7 @@ def main() -> None:
         ensure_label(repo, label)
 
         try:
-            body = review_diff(repo, yesterday)
+            body = review_diff(repo, branch, yesterday)
         except GhError:
             has_error = True
             continue
@@ -273,7 +277,7 @@ def main() -> None:
         if issue_url is None:
             has_error = True
         else:
-            notify_slack(title, issue_url)
+            notify_slack(title, f"レビューコメントがあります\n{issue_url}")
 
     print("=== Nightly review complete ===")
     sys.exit(1 if has_error else 0)

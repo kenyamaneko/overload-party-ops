@@ -24,8 +24,10 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+      - name: Install dependencies
+        run: |
+          pip install pyyaml
+          npm install -g @anthropic-ai/claude-code
 
       - name: Run review
         env:
