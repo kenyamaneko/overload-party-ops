@@ -1,6 +1,6 @@
 project_id = "keyandnotes-ops"
 
-deploy_service_account = "github-deploy@keyandnotes-platform.iam.gserviceaccount.com"
+deploy_service_account = "github-ci@keyandnotes-platform.iam.gserviceaccount.com"
 
 github_pat_nightly_review_accessors = []
 
