@@ -89,52 +89,27 @@ jobs:
           password: ${{ steps.auth.outputs.access_token }}
 
       - name: Build and push migration image
-        run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}
-          docker build \
-            -t ${IMAGE}:${{ inputs.image_sha }} \
-            -t ${IMAGE}:latest \
-            db-migrate/
-          docker push ${IMAGE}:${{ inputs.image_sha }}
-          docker push ${IMAGE}:latest
+        run: db-migrate/build-push.sh
+        env:
+          IMAGE_SHA: ${{ inputs.image_sha }}
 
       - name: Ensure Cloud SQL instance is running
-        run: |
-          gcloud sql instances patch ${{ vars.CLOUDSQL_INSTANCE_NAME }} \
-            --project=${{ inputs.project }} \
-            --activation-policy=ALWAYS --quiet
-          echo "Waiting for instance to become RUNNABLE..."
-          for i in $(seq 1 60); do
-            STATE=$(gcloud sql instances describe ${{ vars.CLOUDSQL_INSTANCE_NAME }} \
-              --project=${{ inputs.project }} --format='value(state)')
-            if [ "$STATE" = "RUNNABLE" ]; then
-              echo "Instance is RUNNABLE (attempt ${i})"
-              break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "Instance failed to become RUNNABLE (state: ${STATE})"
-              exit 1
-            fi
-            sleep 5
-          done
+        run: db-migrate/ensure-sql-running.sh
+        env:
+          CLOUDSQL_INSTANCE_NAME: ${{ vars.CLOUDSQL_INSTANCE_NAME }}
+          PROJECT: ${{ inputs.project }}
 
       - name: Update Cloud Run Job image
-        run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_sha }}
-          gcloud run jobs update db-migrate \
-            --region ${{ env.REGION }} \
-            --project ${{ inputs.project }} \
-            --image "${IMAGE}" \
-            --quiet
+        run: db-migrate/update-job-image.sh
+        env:
+          IMAGE_SHA: ${{ inputs.image_sha }}
+          PROJECT: ${{ inputs.project }}
 
       - name: Execute migration job
         if: ${{ !inputs.dry_run }}
-        run: |
-          gcloud run jobs execute db-migrate \
-            --region ${{ env.REGION }} \
-            --project ${{ inputs.project }} \
-            --wait \
-            --quiet
+        run: db-migrate/execute-job.sh
+        env:
+          PROJECT: ${{ inputs.project }}
 
       - name: Dry-run notice
         if: ${{ inputs.dry_run }}
