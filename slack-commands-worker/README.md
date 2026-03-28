@@ -29,6 +29,10 @@ Cloud Run (slack-commands)
 Slack（結果表示）
 ```
 
+## なぜ TypeScript なのか
+
+他のジョブ・サービスは Python で統一しているが、Cloudflare Workers のランタイムは JavaScript/TypeScript のみをサポートしているため、この Worker だけ TypeScript で実装している。
+
 ## デプロイ
 
 `slack-commands-worker/` 配下を main に push すると GitHub Actions が自動デプロイする。
