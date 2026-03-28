@@ -235,31 +235,48 @@ def main() -> None:
         sys.exit(1)
 
     gke_available = setup_gke_credentials()
-    all_findings: dict[str, list[str]] = {}
+    all_costs: dict[str, list[str]] = {}
+    all_errors: dict[str, list[str]] = {}
 
     for env, project in environments.items():
         print(f"=== Checking {env} ({project}) ===")
         findings = check_environment(env, project, gke_available=gke_available)
-        if findings:
-            all_findings[env] = findings
-            for f in findings:
-                print(f"  - {f}")
-        else:
+        costs = [f for f in findings if not f.startswith(":x:")]
+        errors = [f for f in findings if f.startswith(":x:")]
+        if costs:
+            all_costs[env] = costs
+        if errors:
+            all_errors[env] = errors
+        for f in findings:
+            print(f"  - {f}")
+        if not findings:
             print("No cost-bearing resources detected.")
 
-    if not all_findings:
+    if not all_costs and not all_errors:
         message = f":white_check_mark: *[コスト確認 {today}] 稼働中リソースなし*"
         print(message)
         notify_slack(webhook_url, message)
         print("Slack notification sent.")
         return
 
-    lines = [f":warning: *[コスト警告 {today}] 稼働中リソースあり*", ""]
-    for env, findings in all_findings.items():
-        lines.append(f"*{env}*")
-        for f in findings:
-            lines.append(f"  • {f}")
+    lines: list[str] = []
+    if all_costs:
+        lines.append(f":warning: *[コスト警告 {today}] 稼働中リソースあり*")
         lines.append("")
+        for env, costs in all_costs.items():
+            lines.append(f"*{env}*")
+            for c in costs:
+                lines.append(f"  • {c}")
+            lines.append("")
+
+    if all_errors:
+        lines.append(f":x: *[コスト確認 {today}] チェックエラー*")
+        lines.append("")
+        for env, errors in all_errors.items():
+            lines.append(f"*{env}*")
+            for e in errors:
+                lines.append(f"  • {e}")
+            lines.append("")
 
     message = "\n".join(lines)
     print(message)
