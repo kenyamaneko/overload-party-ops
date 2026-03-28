@@ -19,7 +19,9 @@ Slack スラッシュコマンドを処理する HTTP サービス。Cloudflare 
 Slack → Cloudflare Worker (即時応答) → Cloud Run (処理実行) → response_url に結果POST
 ```
 
-- **Cloudflare Worker** (`slack-commands-worker/`): Slack 署名検証 + 即時応答（コールドスタート回避）
+Slack のスラッシュコマンドは 3 秒以内に応答しなければタイムアウトする。Cloud Run のコールドスタートが 3 秒を超えることがあるため、Cloudflare Worker で即時応答し、バックグラウンドで Cloud Run に転送する構成をとっている。詳細は [slack-commands-worker/README.md](../slack-commands-worker/README.md) を参照。
+
+- **Cloudflare Worker** (`slack-commands-worker/`): Slack 署名検証 + 即時応答
 - **Cloud Run Service** (ここ): コマンド処理。Worker からの Bearer トークンで認証
 
 ## デプロイ
