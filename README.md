@@ -79,12 +79,6 @@ terraform/
   shared/                # 複数ジョブで共有する Secret（github-pat-nightly-review, github-pat-slack-commands）と IAM
     main.tf
     variables.tf
-  cost_monitor/          # 旧 Cloud Run Job 環境（terraform apply で destroy 後に削除予定）
-    main.tf
-    variables.tf
-  drift_monitor/         # 旧 Cloud Run Job 環境（terraform apply で destroy 後に削除予定）
-    main.tf
-    variables.tf
   slack_commands/        # Cloud Run Service + SA + IAM
     main.tf
     variables.tf
