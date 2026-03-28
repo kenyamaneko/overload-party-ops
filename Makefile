@@ -4,12 +4,10 @@ AR_REPO    := overload-party
 REGION     := asia-northeast1
 PROJECT    ?= keyandnotes-ops
 
-JOBS := cost-monitor drift-monitor db-migrate
+JOBS := db-migrate
 
 IMAGE_BASE = $(REGISTRY)/$(AR_PROJECT)/$(AR_REPO)
 
-CLOUD_RUN_JOBS_cost-monitor   := cost-monitor
-CLOUD_RUN_JOBS_drift-monitor  := drift-monitor
 CLOUD_RUN_JOBS_db-migrate     := db-migrate
 
 .PHONY: help build-all push-all

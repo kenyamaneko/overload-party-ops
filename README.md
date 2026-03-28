@@ -1,21 +1,23 @@
 # overload-party-ops
 
-Overload Party の運用ジョブ・サービス管理リポジトリ。Cloud Run Jobs / Services で実行するコンテナイメージと GitHub Actions ワークフローを管理する。
+Overload Party の運用ジョブ・サービス管理リポジトリ。定時実行ジョブは GitHub Actions schedule で直接実行し、CD パイプラインで Cloud Run Service / Job へデプロイする。
 
 ## ジョブ一覧
 
-| ジョブ | 説明 | ツール |
-|--------|------|--------|
-| `db-migrate` | Cloud SQL スキーママイグレーション + IAM 権限付与（破壊的変更の安全チェック付き） | psqldef, psql |
-| `nightly-review` | 毎晩 3:00 (JST) に全リポジトリを自動レビュー → GitHub Issues 起票 | Claude Code, gh |
-| `cost-monitor` | 毎朝 8:00 (JST) に dev/stg のコスト発生リソースをチェック → Slack 通知 | gcloud, kubectl |
-| `drift-monitor` | 毎朝 7:00 (JST) に全リポジトリの Terraform plan を実行し drift 検出 → Slack 通知 | terraform, git |
+| ジョブ | 説明 | 実行基盤 |
+|--------|------|----------|
+| `nightly-review` | 毎晩 3:00 (JST) に全リポジトリを自動レビュー → GitHub Issues 起票 | GitHub Actions |
+| `nightly-shutdown` | 毎晩 2:00 (JST) に dev 環境のリソースを停止 | GitHub Actions |
+| `cost-monitor` | 毎朝 8:00 (JST) に dev/stg のコスト発生リソースをチェック → Slack 通知 | GitHub Actions |
+| `drift-monitor` | 毎朝 7:00 (JST) に全リポジトリの Terraform plan を実行し drift 検出 → Slack 通知 | GitHub Actions |
+| `db-migrate` | Cloud SQL スキーママイグレーション + IAM 権限付与（破壊的変更の安全チェック付き） | Cloud Run Job |
 
 ## サービス一覧
 
-| サービス | 説明 | ツール |
-|---------|------|--------|
-| `slack-commands` | Slack スラッシュコマンド（`/open-issues` 等）を処理する HTTP サービス | FastAPI, httpx |
+| サービス | 説明 | 実行基盤 |
+|---------|------|----------|
+| `slack-commands` | Slack スラッシュコマンド（`/open-issues` 等）を処理する HTTP サービス | Cloud Run Service |
+| `slack-commands-worker` | Slack 署名検証 + 即時応答（コールドスタート回避） | Cloudflare Worker |
 
 ## 使い方
 
@@ -23,7 +25,7 @@ Overload Party の運用ジョブ・サービス管理リポジトリ。Cloud Ru
 
 GitHub Actions の `workflow_dispatch` から手動実行する。
 
-1. **Actions** → **DB Migration** → **Run workflow**
+1. **Actions** → **CD: DB Migration** → **Run workflow**
 2. `environment`: `dev` or `stg`
 3. `dry_run`: `true` にするとイメージ更新のみ（ジョブ実行しない）
 
@@ -54,12 +56,21 @@ overload-party-ops (ここ)                  │
 ## ディレクトリ構成
 
 ```
-db-migrate/              # DB マイグレーションジョブ
+db-migrate/              # DB マイグレーション（Cloud Run Job）
   Dockerfile             # psqldef + psql イメージ
   entrypoint.sh          # マイグレーション実行スクリプト
   schema_check.py        # 破壊的変更検出（DROP TABLE/COLUMN）
+  build-push.sh          # イメージのビルド・push
+  ensure-sql-running.sh  # Cloud SQL 起動待ち
+  update-job-image.sh    # Cloud Run Job のイメージ更新
+  execute-job.sh         # マイグレーションジョブ実行
 nightly-review/          # 夜間自動レビュー（GitHub Actions schedule で実行）
   review.py              # メインスクリプト（差分レビュー・Issue 起票）
+  repos.yaml             # 対象リポジトリ・ブランチ設定
+  notify-failure.sh      # 失敗時の Slack 通知
+nightly-shutdown/        # 夜間リソース停止（GitHub Actions schedule で実行）
+  shutdown.sh            # リソース停止ロジック
+  notify.sh              # Slack 通知
 cost-monitor/            # 環境コスト監視（GitHub Actions schedule で実行）
   check.py               # Cloud SQL, GKE, Ingress, IP, PSC チェック → Slack 通知
   environments.yaml      # 監視対象環境（env → GCP project ID）
@@ -70,28 +81,27 @@ slack-commands/          # Slack スラッシュコマンド（Cloud Run Service
   Dockerfile             # Python 3.12 + FastAPI
   main.py                # FastAPI アプリ、コマンドディスパッチ
   adapters/              # 外部サービス連携（GitHub API, Worker 認証）
-  routers/               # コマンドハンドラ（open_reviews 等）
+  routers/               # コマンドハンドラ（open_issues 等）
 slack-commands-worker/   # Cloudflare Worker（Slack 署名検証 + 即時応答）
   src/index.ts           # リクエスト受付・署名検証・Cloud Run への転送
   src/slack-verify.ts    # Slack 署名検証ロジック
   wrangler.toml          # Cloudflare Worker 設定
 terraform/
-  shared/                # 複数ジョブで共有する Secret（github-pat-nightly-review, github-pat-slack-commands）と IAM
+  shared/                # deploy SA の IAM + 共有 Secret（github-pat, slack-webhook-url）
     main.tf
     variables.tf
   slack_commands/        # Cloud Run Service + SA + IAM
     main.tf
     variables.tf
 .github/workflows/
-  build-deploy-service.yaml  # サービス共通ビルド・デプロイ (reusable workflow)
-  nightly-review.yaml        # nightly-review の定時実行 + 手動実行
-  nightly-shutdown.yaml      # nightly-shutdown の定時実行 + 手動実行
-  cost-monitor.yaml          # cost-monitor の定時実行 + 手動実行
-  drift-monitor.yaml         # drift-monitor の定時実行 + 手動実行
-  db-migrate.yaml            # DB マイグレーション（common push で dev 自動 / 手動 dispatch）
-  slack-commands.yaml        # slack-commands のビルド・デプロイ
-  slack-commands-worker.yaml # slack-commands-worker のデプロイ (wrangler deploy)
-  build-deploy-service.yaml  # サービス共通ビルド・デプロイ (reusable)
+  nightly-review.yaml        # Nightly Review（定時実行 + 手動実行）
+  nightly-shutdown.yaml      # Nightly Shutdown（定時実行 + 手動実行）
+  cost-monitor.yaml          # Cost Monitor（定時実行 + 手動実行）
+  drift-monitor.yaml         # Drift Monitor（定時実行 + 手動実行）
+  db-migrate.yaml            # CD: DB Migration（common push で dev 自動 / 手動 dispatch）
+  slack-commands.yaml        # CD: Slack Commands（main push / 手動 dispatch）
+  slack-commands-worker.yaml # CD: Slack Commands Worker（main push / 手動 dispatch）
+  build-deploy-service.yaml  # CD: Build and Deploy Service（reusable）
 Makefile                     # ローカル開発用コマンド
 ```
 
@@ -106,7 +116,7 @@ Makefile                     # ローカル開発用コマンド
 | `cost-monitor` | `cost-monitor.yaml` | 毎日 8:00 JST |
 | `drift-monitor` | `drift-monitor.yaml` | 毎日 7:00 JST |
 
-### CD パイプライン（push → ビルド → デプロイ）
+### CD パイプライン
 
 | 名前 | ワークフロー | トリガー |
 |------|------------|---------|
@@ -117,23 +127,20 @@ Makefile                     # ローカル開発用コマンド
 ## ローカル開発
 
 ```bash
-# イメージビルド
-make build-cost-monitor
+# DB マイグレーションイメージのビルド
+make build-db-migrate
 
 # ビルド + AR push
-make push-cost-monitor
+make push-db-migrate
 
-# ビルド + push + Cloud Run Job 更新（デフォルト: overload-party-dev）
-make deploy-cost-monitor
+# ビルド + push + Cloud Run Job 更新
+make deploy-db-migrate
 
-# ビルド + push + Cloud Run Service 更新
+# Cloud Run Service 更新
 make deploy-service-slack-commands
 
 # stg 環境にデプロイ
-make deploy-cost-monitor PROJECT=overload-party-stg
-
-# 全イメージビルド
-make build-all
+make deploy-db-migrate PROJECT=overload-party-stg
 
 # コマンド一覧
 make help
@@ -168,7 +175,7 @@ Slack → Cloudflare Worker (即時応答) → Cloud Run (処理実行) → resp
 
 ```bash
 cd terraform/shared
-terraform apply    # github-pat-nightly-review, github-pat-slack-commands の accessors に SA を追加
+terraform apply    # deploy SA の IAM + 共有 Secret
 
 cd ../slack_commands
 terraform init
