@@ -1,20 +1,48 @@
 name: Nightly Review
 
 on:
-  push:
-    branches: [main]
-    paths: [nightly-review/**]
+  schedule:
+    # 3:00 AM JST = 18:00 UTC
+    - cron: "0 18 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write
+  issues: write
 
 jobs:
-  build-deploy:
-    uses: ./.github/workflows/build-deploy-job.yaml
-    with:
-      job_dir: nightly-review
-      image_name: nightly-review
-      cloud_run_jobs: nightly-review-diff
-    secrets: inherit
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPOS_JSON: ${{ vars.REPOS_JSON }}
+        run: python3 nightly-review/review.py
+
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "${SLACK_WEBHOOK_URL}" ]; then
+            MSG=":x: Nightly Review が失敗しました <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|ログ>"
+            curl -s -X POST "${SLACK_WEBHOOK_URL}" \
+              -H 'Content-type: application/json' \
+              --data "$(jq -n --arg text "${MSG}" '{text: $text}')"
+          fi

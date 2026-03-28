@@ -210,7 +210,7 @@ def is_no_issues(body: str) -> bool:
 
 
 def notify_slack(title: str, issue_url: str) -> None:
-    # Secret Manager → Cloud Run 環境変数として注入（Terraform: nightly_review/main.tf）
+    # GitHub Actions secrets 経由で注入
     # 通知失敗はジョブ全体を止めるほどではないため Warning のみ出力して継続する
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:

@@ -4,12 +4,10 @@ AR_REPO    := overload-party
 REGION     := asia-northeast1
 PROJECT    ?= keyandnotes-ops
 
-JOBS := nightly-review cost-monitor drift-monitor db-migrate
+JOBS := cost-monitor drift-monitor db-migrate
 
 IMAGE_BASE = $(REGISTRY)/$(AR_PROJECT)/$(AR_REPO)
 
-# nightly-review は Cloud Run Job が 2 つある
-CLOUD_RUN_JOBS_nightly-review := nightly-review-diff nightly-review-full
 CLOUD_RUN_JOBS_cost-monitor   := cost-monitor
 CLOUD_RUN_JOBS_drift-monitor  := drift-monitor
 CLOUD_RUN_JOBS_db-migrate     := db-migrate

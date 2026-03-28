@@ -58,9 +58,8 @@ db-migrate/              # DB マイグレーションジョブ
   Dockerfile             # psqldef + psql イメージ
   entrypoint.sh          # マイグレーション実行スクリプト
   schema_check.py        # 破壊的変更検出（DROP TABLE/COLUMN）
-nightly-review/          # 夜間自動レビュージョブ
-  Dockerfile             # Node.js 22 + Claude Code + gh
-  review.py              # メインスクリプト（差分/全体の分岐・Issue 起票）
+nightly-review/          # 夜間自動レビュー（GitHub Actions schedule で実行）
+  review.py              # メインスクリプト（差分レビュー・Issue 起票）
 cost-monitor/            # 環境コスト監視（Cloud Run Job）
   Dockerfile             # gcloud SDK + kubectl イメージ
   check.py               # Cloud SQL, GKE, Ingress, IP, PSC チェック → Slack 通知
@@ -80,7 +79,7 @@ terraform/
   shared/                # 複数ジョブで共有する Secret（github-pat-nightly-review, github-pat-slack-commands）と IAM
     main.tf
     variables.tf
-  nightly_review/        # Cloud Run Job + Cloud Scheduler + SA + IAM
+  nightly_review/        # 旧 Cloud Run Job 環境（terraform apply で destroy 後に削除予定）
     main.tf
     variables.tf
   cost_monitor/          # Cloud Run Job + Cloud Scheduler + SA + IAM
@@ -95,7 +94,7 @@ terraform/
 .github/workflows/
   build-deploy-job.yaml      # ジョブ共通ビルド・デプロイ (reusable workflow)
   build-deploy-service.yaml  # サービス共通ビルド・デプロイ (reusable workflow)
-  nightly-review.yaml        # nightly-review のビルド・デプロイ
+  nightly-review.yaml        # nightly-review の定時実行 + 手動実行
   cost-monitor.yaml          # cost-monitor のビルド・デプロイ
   drift-monitor.yaml         # drift-monitor のビルド・デプロイ
   slack-commands.yaml        # slack-commands のビルド・デプロイ
@@ -112,7 +111,7 @@ Makefile                     # ローカル開発用コマンド
 | 名前 | ワークフロー | トリガー |
 |------|------------|---------|
 | `db-migrate` | `db-migrate.yaml` | 手動 dispatch / common push（dev 自動） |
-| `nightly-review` | `nightly-review.yaml` | main push (`nightly-review/**`) / 手動 dispatch |
+| `nightly-review` | `nightly-review.yaml` | 毎日 3:00 JST (schedule) / 手動 dispatch |
 | `cost-monitor` | `cost-monitor.yaml` | main push (`cost-monitor/**`) / 手動 dispatch |
 | `drift-monitor` | `drift-monitor.yaml` | main push (`drift-monitor/**`) / 手動 dispatch |
 | `slack-commands` | `slack-commands.yaml` | main push (`slack-commands/**`) / 手動 dispatch |
