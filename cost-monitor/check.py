@@ -284,6 +284,9 @@ def main() -> None:
     notify_slack(webhook_url, message)
     print("Slack notification sent.")
 
+    if all_errors:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
