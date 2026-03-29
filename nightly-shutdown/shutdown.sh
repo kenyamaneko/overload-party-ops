@@ -74,7 +74,7 @@ fi
 
 RESPONSE=$(curl -s -X PATCH \
   "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
-  -H "Authorization: Bearer ${CLOUDFLARE_DNS_TOKEN}" \
+  -H "Authorization: Bearer ${CLOUDFLARE_DNS_API_TOKEN}" \
   -H "Content-Type: application/json" \
   --data '{"content": "127.0.0.1", "proxied": false}')
 

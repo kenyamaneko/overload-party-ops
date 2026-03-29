@@ -29,7 +29,7 @@ dev 環境のリソースを毎晩自動停止し、コストを削減するワ�
 | 名前 | 用途 |
 |---|---|
 | `SLACK_WEBHOOK_URL` | Slack 通知用 Webhook URL |
-| `CLOUDFLARE_DNS_TOKEN` | Cloudflare API トークン（DNS 編集権限） |
+| `CLOUDFLARE_DNS_API_TOKEN` | Cloudflare API トークン（DNS 編集権限） |
 
 ### Variables
 
