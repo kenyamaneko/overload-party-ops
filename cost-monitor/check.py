@@ -77,7 +77,7 @@ def setup_gke_credentials() -> bool:
     return True
 
 
-def check_cloudsql(project: str) -> list[str]:
+def check_cloudsql(project: str) -> tuple[list[str], list[str]]:
     try:
         state = gcloud_value(
             "sql", "instances", "describe", CLOUDSQL_INSTANCE,
@@ -85,16 +85,17 @@ def check_cloudsql(project: str) -> list[str]:
             allow_not_found=True,
         )
     except CommandError as e:
-        return [f":x: Cloud SQL チェック失敗: {e}"]
+        return [], [f"Cloud SQL チェック失敗: {e}"]
     if not state:
-        return []
+        return [], []
     if state == "RUNNABLE":
-        return [f"Cloud SQL `{CLOUDSQL_INSTANCE}` が RUNNABLE ($0.19/hr)"]
-    return []
+        return [f"Cloud SQL `{CLOUDSQL_INSTANCE}` が RUNNABLE ($0.19/hr)"], []
+    return [], []
 
 
-def check_gke_deployments(env: str) -> list[str]:
-    findings: list[str] = []
+def check_gke_deployments(env: str) -> tuple[list[str], list[str]]:
+    costs: list[str] = []
+    errors: list[str] = []
     for deploy in DEPLOYMENTS:
         try:
             raw = kubectl_json(
@@ -103,7 +104,7 @@ def check_gke_deployments(env: str) -> list[str]:
                 f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}",
             )
         except CommandError as e:
-            findings.append(f":x: Deployment `{deploy}` チェック失敗: {e}")
+            errors.append(f"Deployment `{deploy}` チェック失敗: {e}")
             continue
         if not raw:
             continue
@@ -111,13 +112,13 @@ def check_gke_deployments(env: str) -> list[str]:
             spec = json.loads(raw)
             replicas = spec.get("spec", {}).get("replicas", 0)
             if replicas > 0:
-                findings.append(f"Deployment `{deploy}` が {replicas} レプリカ稼働中")
+                costs.append(f"Deployment `{deploy}` が {replicas} レプリカ稼働中")
         except json.JSONDecodeError as e:
-            findings.append(f":x: Deployment `{deploy}` JSON パース失敗: {e}")
-    return findings
+            errors.append(f"Deployment `{deploy}` JSON パース失敗: {e}")
+    return costs, errors
 
 
-def check_ingress(env: str) -> list[str]:
+def check_ingress(env: str) -> tuple[list[str], list[str]]:
     try:
         raw = kubectl_json(
             "get", "ingress", "overload-party",
@@ -126,22 +127,21 @@ def check_ingress(env: str) -> list[str]:
             allow_not_found=True,
         )
     except CommandError as e:
-        return [f":x: Ingress チェック失敗: {e}"]
+        return [], [f"Ingress チェック失敗: {e}"]
     if not raw:
-        return []
+        return [], []
     try:
         ing = json.loads(raw)
         ip_list = ing.get("status", {}).get("loadBalancer", {}).get("ingress", [])
         if ip_list:
             ip = ip_list[0].get("ip", "unknown")
-            return [f"Ingress `overload-party` が稼働中 (IP: {ip}, ~$0.025/hr)"]
+            return [f"Ingress `overload-party` が稼働中 (IP: {ip}, ~$0.025/hr)"], []
     except json.JSONDecodeError as e:
-        return [f":x: Ingress JSON パース失敗: {e}"]
-    return []
+        return [], [f"Ingress JSON パース失敗: {e}"]
+    return [], []
 
 
-def check_static_ips(project: str) -> list[str]:
-    findings: list[str] = []
+def check_static_ips(project: str) -> tuple[list[str], list[str]]:
     try:
         raw = gcloud(
             "compute", "addresses", "list",
@@ -149,20 +149,20 @@ def check_static_ips(project: str) -> list[str]:
             "--filter", "status=RESERVED AND addressType=EXTERNAL",
         )
     except CommandError as e:
-        return [f":x: 外部 IP チェック失敗: {e}"]
+        return [], [f"外部 IP チェック失敗: {e}"]
     try:
         addresses = json.loads(raw) if raw else []
     except json.JSONDecodeError as e:
-        return [f":x: 外部 IP JSON パース失敗: {e}"]
+        return [], [f"外部 IP JSON パース失敗: {e}"]
+    costs: list[str] = []
     for addr in addresses:
         name = addr.get("name", "unknown")
         ip = addr.get("address", "unknown")
-        findings.append(f"予約済み外部 IP `{name}` ({ip}, ~$3.65/mo)")
-    return findings
+        costs.append(f"予約済み外部 IP `{name}` ({ip}, ~$3.65/mo)")
+    return costs, []
 
 
-def check_psc(project: str) -> list[str]:
-    findings: list[str] = []
+def check_psc(project: str) -> tuple[list[str], list[str]]:
     try:
         raw = gcloud(
             "compute", "forwarding-rules", "list",
@@ -170,15 +170,16 @@ def check_psc(project: str) -> list[str]:
             "--filter", "target~serviceAttachments",
         )
     except CommandError as e:
-        return [f":x: PSC チェック失敗: {e}"]
+        return [], [f"PSC チェック失敗: {e}"]
     try:
         rules = json.loads(raw) if raw else []
     except json.JSONDecodeError as e:
-        return [f":x: PSC JSON パース失敗: {e}"]
+        return [], [f"PSC JSON パース失敗: {e}"]
+    costs: list[str] = []
     for rule in rules:
         name = rule.get("name", "unknown")
-        findings.append(f"PSC forwarding rule `{name}` が稼働中")
-    return findings
+        costs.append(f"PSC forwarding rule `{name}` が稼働中")
+    return costs, []
 
 
 def namespace_exists(env: str) -> bool:
@@ -190,19 +191,27 @@ def namespace_exists(env: str) -> bool:
     return result.returncode == 0
 
 
-def check_environment(env: str, project: str, *, gke_available: bool = True) -> list[str]:
-    findings: list[str] = []
-    findings.extend(check_cloudsql(project))
+def check_environment(
+    env: str, project: str, *, gke_available: bool = True,
+) -> tuple[list[str], list[str]]:
+    costs: list[str] = []
+    errors: list[str] = []
+
+    def _collect(result: tuple[list[str], list[str]]) -> None:
+        costs.extend(result[0])
+        errors.extend(result[1])
+
+    _collect(check_cloudsql(project))
     if gke_available and namespace_exists(env):
-        findings.extend(check_gke_deployments(env))
-        findings.extend(check_ingress(env))
+        _collect(check_gke_deployments(env))
+        _collect(check_ingress(env))
     elif not gke_available:
         print("GKE credentials unavailable, skipping GKE checks.")
     else:
         print(f"Namespace '{env}' not found, skipping GKE checks.")
-    findings.extend(check_static_ips(project))
-    findings.extend(check_psc(project))
-    return findings
+    _collect(check_static_ips(project))
+    _collect(check_psc(project))
+    return costs, errors
 
 
 def notify_slack(webhook_url: str, message: str) -> None:
@@ -240,16 +249,16 @@ def main() -> None:
 
     for env, project in environments.items():
         print(f"=== Checking {env} ({project}) ===")
-        findings = check_environment(env, project, gke_available=gke_available)
-        costs = [f for f in findings if not f.startswith(":x:")]
-        errors = [f for f in findings if f.startswith(":x:")]
+        costs, errors = check_environment(env, project, gke_available=gke_available)
         if costs:
             all_costs[env] = costs
         if errors:
             all_errors[env] = errors
-        for f in findings:
-            print(f"  - {f}")
-        if not findings:
+        for c in costs:
+            print(f"  - {c}")
+        for e in errors:
+            print(f"  - [ERROR] {e}")
+        if not costs and not errors:
             print("No cost-bearing resources detected.")
 
     if not all_costs and not all_errors:
