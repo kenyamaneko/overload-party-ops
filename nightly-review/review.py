@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import yaml
 
 GITHUB_ORG = "kenyamaneko"
 MAX_DIFF_CHARS = 150000
+MAX_FILE_CONTENT_CHARS = 300000
 
 REPOS_YAML = Path(__file__).parent / "repos.yaml"
 
@@ -99,20 +101,71 @@ def issue_exists(repo: str, search_key: str) -> bool:
     return output.isdigit() and int(output) > 0
 
 
-def get_diff(repo: str, branch: str, since: str) -> str | None:
+def get_diff(repo: str, branch: str, since: str) -> tuple[str | None, list[str]]:
+    """差分テキストと変更ファイル名リストを返す。"""
     commits_json = gh(
         "api", f"repos/{GITHUB_ORG}/{repo}/commits?sha={branch}&since={since}",
         "-q", "length",
     )
     commit_count = int(commits_json) if commits_json.isdigit() else 0
     if commit_count == 0:
-        return None
+        return None, []
 
-    raw = gh(
-        "api", f"repos/{GITHUB_ORG}/{repo}/compare/{branch}~{commit_count}...{branch}",
-        "--jq", '.files[] | select(.patch != null) | "=== \\(.filename) ===\\n\\(.patch)"',
+    compare_endpoint = f"repos/{GITHUB_ORG}/{repo}/compare/{branch}~{commit_count}...{branch}"
+
+    # ファイル名と差分を1回の API コールで取得
+    combined = gh(
+        "api", compare_endpoint,
+        "--jq", '.files[] | select(.patch != null) | {filename, patch}',
     )
-    return raw if raw else None
+
+    if not combined:
+        return None, []
+
+    filenames: list[str] = []
+    diff_parts: list[str] = []
+    for line in combined.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            filenames.append(obj["filename"])
+            diff_parts.append(f"=== {obj['filename']} ===\n{obj['patch']}")
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+    raw = "\n".join(diff_parts)
+    return (raw if raw else None), filenames
+
+
+def get_file_contents(repo: str, branch: str, filenames: list[str], limit: int) -> str:
+    """変更ファイルの全文を GitHub API 経由で取得し、制限内で結合して返す。"""
+    sections: list[str] = []
+    total = 0
+
+    for filename in filenames:
+        try:
+            content = gh(
+                "api", f"repos/{GITHUB_ORG}/{repo}/contents/{filename}?ref={branch}",
+                "--jq", ".content",
+            )
+        except GhError:
+            continue
+
+        # GitHub API は Base64 でエンコードされたコンテンツを返す
+        try:
+            decoded = base64.b64decode(content).decode("utf-8", errors="replace")
+        except Exception:
+            continue
+
+        section = f"=== {filename} (full) ===\n{decoded}"
+        if total + len(section) > limit and sections:
+            break
+        sections.append(section)
+        total += len(section)
+
+    return "\n".join(sections)
 
 
 def run_claude(prompt: str) -> str | None:
@@ -166,7 +219,7 @@ def truncate_diff(diff: str, limit: int) -> tuple[str, list[str]]:
 
 def review_diff(repo: str, branch: str, yesterday: str) -> str | None:
     since = f"{yesterday}T00:00:00Z"
-    diff = get_diff(repo, branch, since)
+    diff, filenames = get_diff(repo, branch, since)
     if diff is None:
         print(f"  No changes since {yesterday}, skipping.")
         return None
@@ -176,9 +229,20 @@ def review_diff(repo: str, branch: str, yesterday: str) -> str | None:
     note = ""
     if omitted:
         files = ", ".join(omitted)
-        note = f"（注：差分が大きいため以下のファイルは省略されています: {files}）"
+        note = f"（注：差分が大きいため以下のファイルは省略されています: {files}）\n"
 
-    prompt = f"{DIFF_PROMPT}{note}\n\n```diff\n{diff}\n```"
+    # 変更ファイルの全文を取得してコンテキストとして添付
+    file_context = ""
+    if filenames:
+        print(f"  Fetching full content for {len(filenames)} changed files...")
+        file_context = get_file_contents(repo, branch, filenames, MAX_FILE_CONTENT_CHARS)
+        if file_context:
+            file_context = (
+                "\n\n以下は変更されたファイルの全文です。\n\n"
+                f"```\n{file_context}\n```"
+            )
+
+    prompt = f"{DIFF_PROMPT}{note}\n\n```diff\n{diff}\n```{file_context}"
     return run_claude(prompt)
 
 
