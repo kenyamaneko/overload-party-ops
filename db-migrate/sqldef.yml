@@ -1,0 +1,19 @@
+# psqldef configuration for overload-party DB migration.
+#
+# target_schema limits which PostgreSQL schemas psqldef will diff and manage.
+# Without this, psqldef would scan every user schema (or only `public`, depending
+# on version), which risks either missing or accidentally dropping tables in
+# non-target schemas.
+#
+# Per ADR-014, the DB has 7 service-owned schemas. All are listed here so that
+# psqldef manages them as a unit when applying schema_postgres.sql.
+#
+# See https://github.com/sqldef/sqldef/blob/main/cmd-psqldef.md for details.
+target_schema: |
+  shared
+  account
+  card
+  shop
+  scenario
+  battle
+  newsfeed

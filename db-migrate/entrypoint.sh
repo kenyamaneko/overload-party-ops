@@ -2,7 +2,11 @@
 set -euo pipefail
 
 echo "==> Applying schema migration (psqldef)..."
+# --config は ADR-014 の 7 サービススキーマを target_schema で明示する。
+# 指定がないと psqldef が public 以外のスキーマを認識できず、スキーマ分割後の
+# テーブルを全て「新規作成」扱いするか、存在しないと見做して drop しかねない。
 psqldef \
+  --config=/app/sqldef.yml \
   --host="${DATABASE_HOST}" \
   --port="${DATABASE_PORT}" \
   --user="${DATABASE_USER}" \

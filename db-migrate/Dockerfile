@@ -19,6 +19,7 @@ RUN apk add --no-cache bash
 COPY --from=builder /psqldef /usr/local/bin/psqldef
 
 COPY sql/ /app/sql/
+COPY sqldef.yml /app/sqldef.yml
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 

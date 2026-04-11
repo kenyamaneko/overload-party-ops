@@ -4,7 +4,7 @@ import re
 import sys
 
 TABLE_RE = re.compile(
-    r"CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);",
+    r"CREATE\s+TABLE\s+((?:\w+\.)?\w+)\s*\((.*?)\);",
     re.IGNORECASE | re.DOTALL,
 )
 CONSTRAINT_KEYWORDS = {
@@ -31,7 +31,10 @@ def _extract_columns(body: str) -> set[str]:
 def parse_schema(sql: str) -> dict[str, set[str]]:
     tables: dict[str, set[str]] = {}
     for match in TABLE_RE.finditer(sql):
-        table_name = match.group(1).lower()
+        qualified = match.group(1).lower()
+        # schema-qualified name から unqualified 部分のみ取り出す（旧 public スキーマ時代の
+        # DATA_DESIGN.md や schema dump と比較できるように unqualified をキーにする）
+        table_name = qualified.split(".", 1)[1] if "." in qualified else qualified
         body = match.group(2)
         tables[table_name] = _extract_columns(body)
     return tables
