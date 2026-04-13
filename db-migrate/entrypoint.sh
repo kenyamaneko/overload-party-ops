@@ -1,25 +1,34 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "==> Applying schema migration (psqldef)..."
-# --config は ADR-014 の 7 サービススキーマを target_schema で明示する。
-# 指定がないと psqldef が public 以外のスキーマを認識できず、スキーマ分割後の
-# テーブルを全て「新規作成」扱いするか、存在しないと見做して drop しかねない。
-psqldef \
+# db-migrate entrypoint -- Cloud Run Job コンテナ内で実行される。
+#
+# psqldef 失敗時に grant_iam.sql が半端なスキーマに適用されないよう、
+# 明示的にガードしている（set -e と二重防御）。
+
+echo "==> Applying schema union (psqldef)..."
+if ! psqldef \
   --config=/app/sqldef.yml \
   --host="${DATABASE_HOST}" \
   --port="${DATABASE_PORT}" \
   --user="${DATABASE_USER}" \
   --password="${DATABASE_PASSWORD}" \
   "${DATABASE_NAME}" \
-  < /app/sql/schema_postgres.sql
+  < /app/sql/schema_union.sql; then
+  echo "ERROR: psqldef failed — aborting before grant_iam.sql to avoid applying grants to a partially-migrated schema." >&2
+  exit 1
+fi
 
 echo "==> Applying IAM grants..."
-PGPASSWORD="${DATABASE_PASSWORD}" psql \
+if ! PGPASSWORD="${DATABASE_PASSWORD}" psql \
+  -v ON_ERROR_STOP=1 \
   -h "${DATABASE_HOST}" \
   -p "${DATABASE_PORT}" \
   -U "${DATABASE_USER}" \
   -d "${DATABASE_NAME}" \
-  -f /app/sql/grant_iam.sql
+  -f /app/sql/grant_iam.sql; then
+  echo "ERROR: grant_iam.sql application failed." >&2
+  exit 1
+fi
 
 echo "==> Migration complete."

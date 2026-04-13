@@ -1,0 +1,71 @@
+# db-migrate schema source lock
+#
+# 各サービスリポの DDL を union して Cloud SQL に適用するためのソース一覧。
+# このファイルは `fetch-schemas.sh` が参照し、列挙順でそのまま concat するため、
+# 依存順 (shared → 各サービス) を壊さないこと。
+#
+# ref には再現性のため commit SHA を入れてもよい。通常は main を pin する。
+# main 以外に振れるのは、事故復旧 / 特定リビジョンに固定した stg 検証 / bisect 時のみ。
+#
+# 追加・削除手順:
+#   1. このファイルに entry を足す (依存順を考慮)
+#   2. PR を作成し、CI で `fetch-schemas.sh` が union をビルドできることを確認
+#   3. main merge 後の自動 db-migrate (dev) で psqldef が差分を適用する
+#   4. stg / prod は手動 workflow_dispatch で環境ごとに実行
+
+schemas:
+  - name: shared
+    repo: kenyamaneko/overload-party-common
+    path: db/schema_postgres.sql
+    ref: main
+    # shared スキーマ本体 + shared.update_updated_at() trigger function。
+
+  - name: account
+    repo: kenyamaneko/overload-party-account
+    path: db/schema.sql
+    ref: main
+    # account.players / account.player_daily_battle / account.player_factions /
+    # account.user_settings。shared.update_updated_at() に依存。
+
+  - name: battle
+    repo: kenyamaneko/overload-party-battle
+    path: db/schema.sql
+    ref: main
+    # battle.games / battle.game_npcs / battle.game_decks / battle.game_states /
+    # battle.game_actions / battle.game_events。
+    # battle はスロット番号 (1/2) のみを扱い、プレイヤー ID を知らない。
+    # game_players は gateway スキーマが所有する。
+
+  - name: gateway
+    repo: kenyamaneko/overload-party-gateway
+    path: db/schema.sql
+    ref: main
+    # gateway.game_players。match_made 受信時に gateway が INSERT し、ゲーム終了時に
+    # exp_awarded を更新する。game_id は battle.games を app-level FK で参照するため
+    # battle の後に適用する必要がある。
+
+  - name: card
+    repo: kenyamaneko/overload-party-card
+    path: db/schema.sql
+    ref: main
+    # card.card_definitions / card.player_cards / card.decks / card.deck_cards
+
+  - name: shop
+    repo: kenyamaneko/overload-party-shop
+    path: db/schema.sql
+    ref: main
+    # shop.products / shop.subscriptions / shop.one_time_purchases /
+    # shop.cosmetic_items / shop.player_items
+
+  - name: scenario
+    repo: kenyamaneko/overload-party-scenario
+    path: db/schema.sql
+    ref: main
+    # scenario.scenario_episodes / scenario.episode_required_factions /
+    # scenario.player_story_progress
+
+  - name: newsfeed
+    repo: kenyamaneko/overload-party-newsfeed
+    path: db/schema.sql
+    ref: main
+    # newsfeed.news_articles

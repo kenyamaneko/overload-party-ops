@@ -13,7 +13,7 @@ CONSTRAINT_KEYWORDS = {
 
 
 def _extract_columns(body: str) -> set[str]:
-    """CREATE TABLE 本体からカラム名を抽出する。"""
+    """CREATE TABLE 本体からカラム名を抽出します。"""
     columns: set[str] = set()
     for line in body.split(","):
         line = line.strip()
@@ -29,11 +29,11 @@ def _extract_columns(body: str) -> set[str]:
 
 
 def parse_schema(sql: str) -> dict[str, set[str]]:
+    """SQL からテーブル定義をパースし、テーブル名→カラム名集合のマップを返します。"""
     tables: dict[str, set[str]] = {}
     for match in TABLE_RE.finditer(sql):
         qualified = match.group(1).lower()
-        # schema-qualified name から unqualified 部分のみ取り出す（旧 public スキーマ時代の
-        # DATA_DESIGN.md や schema dump と比較できるように unqualified をキーにする）
+        # unqualified をキーにすることで旧 public スキーマ時代のダンプとも比較可能にする
         table_name = qualified.split(".", 1)[1] if "." in qualified else qualified
         body = match.group(2)
         tables[table_name] = _extract_columns(body)
@@ -41,6 +41,7 @@ def parse_schema(sql: str) -> dict[str, set[str]]:
 
 
 def check(old_path: str, new_path: str) -> list[str]:
+    """新旧スキーマを比較し、破壊的変更の警告リストを返します。"""
     with open(old_path) as f:
         old_schema = parse_schema(f.read())
     with open(new_path) as f:
@@ -61,6 +62,7 @@ def check(old_path: str, new_path: str) -> list[str]:
 
 
 def main() -> None:
+    """スキーマ安全性チェックのメインエントリーポイントです。"""
     if len(sys.argv) != 3:
         print(f"Usage: {sys.argv[0]} <old_schema.sql> <new_schema.sql>")
         sys.exit(2)

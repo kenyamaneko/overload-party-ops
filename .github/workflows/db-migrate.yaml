@@ -1,4 +1,12 @@
-# common リポの main push で dev 自動実行 / 手動で環境選択実行
+# 各サービスリポの main push、または手動 dispatch で発火。
+# schemas.lock.yaml に列挙された全サービスの db/schema.sql を union し psqldef で一括適用。
+#
+# 自動トリガー:
+#   - どの service repo が main に push しても repository_dispatch(db-migrate) を
+#     送出し、dev 環境に対して自動実行する。
+#
+# 手動トリガー:
+#   - workflow_dispatch で環境 (dev/stg) + dry-run を選択可能。
 name: "CD: DB Migration"
 
 on:
@@ -46,40 +54,61 @@ jobs:
         run: |
           echo "project=$(echo '${{ env.PROJECTS }}' | jq -r '.\"${{ env.ENV }}\"')" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "common_ref=${{ github.event.client_payload.sha || 'main' }}" >> "$GITHUB_OUTPUT"
-            echo "image_sha=${{ github.event.client_payload.sha || github.sha }}" >> "$GITHUB_OUTPUT"
+            # repository_dispatch 側 (service repo 側) が client_payload.sha を送ってきても、
+            # それは送信元 repo の SHA であって ops repo の SHA ではないので使わない。
+            # ops 側は常に main (= schemas.lock.yaml の HEAD) を採用する。
+            echo "image_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
           else
-            echo "common_ref=main" >> "$GITHUB_OUTPUT"
             echo "image_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
             echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Checkout ops repo
-        uses: actions/checkout@v4
-
-      - name: Checkout common repo (SQL files only)
+      - name: Checkout ops repo (fetch-depth=2 for HEAD~1 safety diff)
         uses: actions/checkout@v4
         with:
-          repository: kenyamaneko/overload-party-common
-          token: ${{ secrets.DB_MIGRATE_TOKEN }}
-          ref: ${{ steps.params.outputs.common_ref }}
-          path: common
-          sparse-checkout: db/
+          fetch-depth: 2
 
-      - name: Copy SQL files into build context
-        run: |
-          mkdir -p db-migrate/sql
-          cp common/db/schema_postgres.sql db-migrate/sql/
-          cp common/db/grant_iam.sql db-migrate/sql/
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Get previous schema for safety check
+      - name: Install Python deps
+        run: pip install pyyaml
+
+      - name: Build schema union (current HEAD of schemas.lock.yaml)
+        env:
+          DB_MIGRATE_TOKEN: ${{ secrets.DB_MIGRATE_TOKEN }}
         run: |
-          cd common
-          git show HEAD~1:db/schema_postgres.sql > /tmp/schema_old.sql 2>/dev/null || touch /tmp/schema_old.sql
+          python3 db-migrate/fetch-schemas.py \
+            --lock db-migrate/schemas.lock.yaml \
+            --out db-migrate/sql/schema_union.sql \
+            --grant-src db-migrate/grant_iam.sql \
+            --workdir /tmp/schema-src-new
+
+      - name: Build previous schema union (for safety diff)
+        env:
+          DB_MIGRATE_TOKEN: ${{ secrets.DB_MIGRATE_TOKEN }}
+        run: |
+          # HEAD~1 の schemas.lock.yaml を取り出し、その時点の union を作って
+          # 破壊的変更を検出する。ops repo に前コミットがない場合 (初回) はスキップ。
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            git show HEAD~1:db-migrate/schemas.lock.yaml > /tmp/schemas.lock.old.yaml
+            python3 db-migrate/fetch-schemas.py \
+              --lock /tmp/schemas.lock.old.yaml \
+              --out /tmp/schema_union.old.sql \
+              --grant-src db-migrate/grant_iam.sql \
+              --workdir /tmp/schema-src-old
+          else
+            echo "" > /tmp/schema_union.old.sql
+          fi
 
       - name: Schema safety check
-        run: python3 db-migrate/schema_check.py /tmp/schema_old.sql db-migrate/sql/schema_postgres.sql
+        run: |
+          python3 db-migrate/schema_check.py \
+            /tmp/schema_union.old.sql \
+            db-migrate/sql/schema_union.sql
 
       - name: Authenticate to Google Cloud
         id: auth

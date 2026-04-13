@@ -5,8 +5,8 @@
 # on version), which risks either missing or accidentally dropping tables in
 # non-target schemas.
 #
-# Per ADR-014, the DB has 7 service-owned schemas. All are listed here so that
-# psqldef manages them as a unit when applying schema_postgres.sql.
+# The DB has 7 service-owned schemas. All are listed here so that
+# psqldef manages them as a unit when applying the schema union.
 #
 # See https://github.com/sqldef/sqldef/blob/main/cmd-psqldef.md for details.
 target_schema: |

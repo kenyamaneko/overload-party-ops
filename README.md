@@ -17,7 +17,7 @@ Overload Party の運用ジョブ・サービス管理リポジトリ。
 
 | 名前 | 説明 | トリガー |
 |------|------|---------|
-| [`db-migrate`](db-migrate/) | Cloud SQL スキーママイグレーション | common push（dev 自動）/ 手動 dispatch |
+| [`db-migrate`](db-migrate/) | Cloud SQL スキーママイグレーション (multi-source union) | service repo push（dev 自動）/ 手動 dispatch |
 | [`slack-commands`](slack-commands/) | Slack スラッシュコマンドサービス | main push / 手動 dispatch |
 | `slack-commands-worker` | Cloudflare Worker（Slack 署名検証 + 即時応答） | main push / 手動 dispatch |
 
@@ -79,11 +79,5 @@ cloud-sql-proxy <PROJECT>:<REGION>:overload-party-db --port=5432
 psql -h 127.0.0.1 -U <USER> -d overload_party
 ```
 
-> **注意:** 直接修正は psqldef の管理状態と乖離するため、修正後に `schema_postgres.sql` を必ず同期すること。
+> **注意:** 直接修正は psqldef の管理状態と乖離するため、修正後に各サービスリポの `db/schema.sql` を必ず同期すること (union のソースは `db-migrate/schemas.lock.yaml` 参照)。
 
-## 関連リポジトリ
-
-| リポジトリ | 内容 |
-|-----------|------|
-| [overload-party-common](https://github.com/kenyamaneko/overload-party-common) | 共有データ（スキーマ SQL, カード定義, ドキュメント） |
-| [overload-party-infra](https://github.com/kenyamaneko/overload-party-infra) | Terraform（Cloud Run Job / Cloud SQL / IAM） |

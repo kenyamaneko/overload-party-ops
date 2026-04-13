@@ -1,45 +1,95 @@
 # DB Migrate
 
-psqldef ベースのスキーママイグレーションシステム。overload-party-common リポジトリの SQL 定義を Cloud Run Job 経由で Cloud SQL に適用する。
+psqldef ベースの multi-source スキーママイグレーションシステム。各サービスリポに分散した DDL を union して Cloud SQL に適用する。
+
+## スキーマソース
+
+DB スキーマはサービスごとに分割されている。DDL の所在:
+
+| Schema | Owner repo | Path in repo |
+|--------|------------|--------------|
+| `shared` | overload-party-common | `db/schema_postgres.sql` |
+| `account` | overload-party-account | `db/schema.sql` |
+| `battle` | overload-party-battle | `db/schema.sql` |
+| `card` | overload-party-card | `db/schema.sql` |
+| `shop` | overload-party-shop | `db/schema.sql` |
+| `scenario` | overload-party-scenario | `db/schema.sql` |
+| `newsfeed` | overload-party-newsfeed | `schema.sql` (repo root, 旧構造) |
+
+gateway / matchmaking は DB を直接持たない (各サービス API 経由 or Redis のみ)。
 
 ## 仕組み
 
-1. common リポから SQL ファイル（`schema_postgres.sql`, `grant_iam.sql`）を sparse-checkout で取得
-2. psqldef を含む Docker イメージをビルドし Artifact Registry にプッシュ
-3. Cloud Run Job のイメージを更新
-4. Cloud Run Job を実行し、Cloud SQL にスキーマを適用 + IAM 権限を付与
+1. `schemas.lock.yaml` に列挙された全サービスリポを pinned ref で sparse-checkout (`fetch-schemas.py`)
+2. 取得した DDL を依存順 (shared → 各サービス) で union し `sql/schema_union.sql` に書き出す
+3. psqldef + `sqldef.yml` の `target_schema` で 7 スキーマを宣言的に diff → ALTER 適用
+4. `grant_iam.sql` を psql で実行して IAM user 権限を付与 (per-schema RW + shared read)
 
-psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と SQL 定義の差分を自動で計算・適用する。
+psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と union の差分を自動で計算・適用する。union は常に「望ましい全体像」なので、サービスを追加したら lock file に 1 行足せば次のマイグレーションで新スキーマが作られる。
 
-> psqldef の upstream バグ（dropped column で NULL スキャン）に対するパッチを Dockerfile 内で適用している。
+> psqldef の upstream バグ (dropped column で NULL スキャン) に対するパッチを Dockerfile 内で適用している。
+
+## ファイル一覧
+
+| ファイル | 役割 |
+|---------|------|
+| `schemas.lock.yaml` | 各サービスリポの DDL 参照 (repo / path / ref) |
+| `fetch-schemas.py` | lock file から union をビルドする CI 側スクリプト |
+| `grant_iam.sql` | IAM ロール権限付与 (per-schema, idempotent) |
+| `sqldef.yml` | psqldef config — 管理対象スキーマを 7 つに限定 |
+| `schema_check.py` | 破壊的変更 (DROP TABLE / DROP COLUMN) 検出 |
+| `entrypoint.sh` | psqldef + psql 実行ラッパー (Cloud Run Job 内で走る) |
+| `Dockerfile` | psqldef を upstream patch + Alpine postgres client で同梱 |
+| `build-push.sh` | イメージビルド & Artifact Registry push |
+| `update-job-image.sh` | Cloud Run Job のイメージ差し替え |
+| `execute-job.sh` | Cloud Run Job 実行 |
+| `ensure-sql-running.sh` | Cloud SQL インスタンス起動待ち (夜間停止運用との互換) |
+| `sql/` | gitignore。CI 実行時に生成される `schema_union.sql` + copy された `grant_iam.sql` |
+
+## スキーマ変更フロー
+
+### サービスリポ側 (開発者)
+
+1. 各サービスリポの `db/schema.sql` を編集
+2. PR → main merge
+3. main push が自動で ops repo に `repository_dispatch(db-migrate)` を送出 (該当 workflow が各サービスリポ側に必要)
+4. ops 側の db-migrate workflow が dev 環境に自動適用
+
+### ops 側 (ref を pin したい場合)
+
+1. `db-migrate/schemas.lock.yaml` を編集して特定 ref に pin (trouble shoot / bisect / hotfix 等)
+2. ops repo に PR / main merge
+3. `gh workflow run db-migrate.yaml -f environment=dev` (or `stg`) で手動実行
+
+### stg / prod への昇格
+
+1. dev で適用を確認後、`gh workflow run db-migrate.yaml -f environment=stg` を手動実行
+2. lock file の ref は環境間で共通 (dev で検証済みのものを stg でそのまま使う)
 
 ## スキーマ安全チェック
 
-`schema_check.py` が新旧スキーマを比較し、破壊的変更を検出する。
+`schema_check.py` が「前コミットの lock file で作った union」 vs 「現コミットの lock file で作った union」を比較し、破壊的変更 (DROP TABLE / DROP COLUMN) を検出する。
 
-- `DROP TABLE` の検出
-- `DROP COLUMN` の検出
-
-破壊的変更が検出された場合、ワークフローは失敗する。意図的な変更の場合は dry-run で差分を確認した上で対応する。
+破壊的変更が検出されるとワークフローは失敗する。意図的な変更の場合は dry_run でプレビューした上で手動実行する。
 
 ## トリガー
 
-### repository_dispatch（自動）
+### repository_dispatch (自動)
 
-common リポの main push 時に `db-migrate` イベントが発火し、**dev 環境のみ**自動実行される。
+service repo の main push 時に `db-migrate` イベントが発火し、**dev 環境のみ**自動実行される。各 service repo 側の workflow が送信元。
 
-### workflow_dispatch（手動）
+### workflow_dispatch (手動)
 
-GitHub Actions の UI から手動実行。以下のパラメータを指定できる:
+GitHub Actions UI から手動実行。
 
 | パラメータ | 説明 | デフォルト |
 |-----------|------|-----------|
-| `environment` | 対象環境（`dev` / `stg`） | `dev` |
-| `dry_run` | dry-run モード（イメージ更新のみ、ジョブ実行なし） | `false` |
+| `environment` | 対象環境 (`dev` / `stg`) | `dev` |
+| `dry_run` | dry-run モード (イメージ更新のみ、ジョブ実行なし) | `false` |
 
 ## Dry-run モード
 
-`dry_run=true` で実行すると、Docker イメージのビルド・プッシュと Cloud Run Job のイメージ更新までは行うが、**ジョブの実行はスキップ**される。スキーマ変更の安全性を事前確認したい場合に使う。
+`dry_run=true` で実行すると Docker イメージのビルド・プッシュと Cloud Run Job のイメージ更新までは行うが、**ジョブ実行はスキップ**される。
 
 ## セットアップ
 
@@ -49,9 +99,9 @@ ops リポジトリの Settings > Secrets and variables > Actions > Secrets:
 
 | 名前 | 値 |
 |------|-----|
-| `DB_MIGRATE_TOKEN` | common リポへのアクセス用 PAT |
+| `DB_MIGRATE_TOKEN` | 全 service repo に read 権限のある PAT (fine-grained 推奨、対象: common / account / battle / card / shop / scenario / newsfeed) |
 
-### GitHub Variables（環境ごと）
+### GitHub Variables (環境ごと)
 
 ops リポジトリの Settings > Environments > `dev` / `stg` > Environment variables:
 
@@ -60,3 +110,30 @@ ops リポジトリの Settings > Environments > `dev` / `stg` > Environment var
 | `WIF_PROVIDER` | Workload Identity Federation プロバイダ |
 | `CI_SERVICE_ACCOUNT` | CI 用サービスアカウント |
 | `CLOUDSQL_INSTANCE_NAME` | Cloud SQL インスタンス名 |
+
+## newsfeed schema の配置
+
+newsfeed リポの schema は他サービス (`db/schema.sql`) と違い、リポルート
+(`schema.sql`) に置かれている。これは newsfeed が Cloud Run Job として運用
+されている都合で、リポ直下に `main.py` / `Dockerfile` があり `db/` サブ
+ディレクトリを持たないため。`schemas.lock.yaml` の `path` だけがそれを吸収
+しており、内容は他サービスと同じく `CREATE SCHEMA IF NOT EXISTS newsfeed;`
+と `newsfeed.` 修飾名で self-contained になっている。
+
+## ローカルでの dry-run
+
+```bash
+# lock file から union をビルド (GitHub PAT が必要)
+export DB_MIGRATE_TOKEN=ghp_xxx
+python3 db-migrate/fetch-schemas.py \
+  --lock db-migrate/schemas.lock.yaml \
+  --out db-migrate/sql/schema_union.sql \
+  --grant-src db-migrate/grant_iam.sql
+
+# ローカル postgres に流す
+docker run -d --rm --name testdb -p 5433:5432 \
+  -e POSTGRES_PASSWORD=testpass postgres:16-alpine
+psqldef --dry-run --config db-migrate/sqldef.yml \
+  --host=127.0.0.1 --port=5433 --user=postgres --password=testpass postgres \
+  < db-migrate/sql/schema_union.sql
+```

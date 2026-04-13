@@ -5,7 +5,7 @@ gcloud sql instances patch "${CLOUDSQL_INSTANCE_NAME}" \
   --project="${PROJECT}" \
   --activation-policy=ALWAYS --quiet
 
-echo "Waiting for instance to become RUNNABLE..."
+echo "インスタンスが RUNNABLE になるまで待機..."
 for i in $(seq 1 60); do
   STATE=$(gcloud sql instances describe "${CLOUDSQL_INSTANCE_NAME}" \
     --project="${PROJECT}" --format='value(state)')
