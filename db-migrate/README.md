@@ -8,22 +8,22 @@ DB スキーマはサービスごとに分割されている。DDL の所在:
 
 | Schema | Owner repo | Path in repo |
 |--------|------------|--------------|
-| `shared` | overload-party-common | `db/schema_postgres.sql` |
 | `account` | overload-party-account | `db/schema.sql` |
 | `battle` | overload-party-battle | `db/schema.sql` |
 | `card` | overload-party-card | `db/schema.sql` |
 | `shop` | overload-party-shop | `db/schema.sql` |
 | `scenario` | overload-party-scenario | `db/schema.sql` |
-| `newsfeed` | overload-party-newsfeed | `schema.sql` (repo root, 旧構造) |
+| `gateway` | overload-party-gateway | `db/schema.sql` |
+| `newsfeed` | overload-party-newsfeed | `schema.sql` (repo root 配置) |
 
-gateway / matchmaking は DB を直接持たない (各サービス API 経由 or Redis のみ)。
+matchmaking は DB を持たない (Redis + Pub/Sub のみ)。ゲーム動的設定値 (`game_config`) は Cloud Firestore で別管理。
 
 ## 仕組み
 
 1. `schemas.lock.yaml` に列挙された全サービスリポを pinned ref で sparse-checkout (`fetch-schemas.py`)
-2. 取得した DDL を依存順 (shared → 各サービス) で union し `sql/schema_union.sql` に書き出す
+2. 取得した DDL を依存順で union し `sql/schema_union.sql` に書き出す (app-level FK 依存の都合で `gateway` は `battle` の後)
 3. psqldef + `sqldef.yml` の `target_schema` で 7 スキーマを宣言的に diff → ALTER 適用
-4. `grant_iam.sql` を psql で実行して IAM user 権限を付与 (per-schema RW + shared read)
+4. `grant_iam.sql` を psql で実行して IAM user 権限を付与 (per-schema RW)
 
 psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と union の差分を自動で計算・適用する。union は常に「望ましい全体像」なので、サービスを追加したら lock file に 1 行足せば次のマイグレーションで新スキーマが作られる。
 
@@ -99,7 +99,7 @@ ops リポジトリの Settings > Secrets and variables > Actions > Secrets:
 
 | 名前 | 値 |
 |------|-----|
-| `DB_MIGRATE_TOKEN` | 全 service repo に read 権限のある PAT (fine-grained 推奨、対象: common / account / battle / card / shop / scenario / newsfeed) |
+| `DB_MIGRATE_TOKEN` | 全 service repo に read 権限のある PAT (fine-grained 推奨、対象: account / battle / card / shop / scenario / gateway / newsfeed) |
 
 ### GitHub Variables (環境ごと)
 

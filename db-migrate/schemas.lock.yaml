@@ -2,7 +2,9 @@
 #
 # 各サービスリポの DDL を union して Cloud SQL に適用するためのソース一覧。
 # このファイルは `fetch-schemas.sh` が参照し、列挙順でそのまま concat するため、
-# 依存順 (shared → 各サービス) を壊さないこと。
+# 依存順を壊さないこと。各サービススキーマは自前の update_updated_at() を定義するため
+# 他スキーマへの依存は無い。app-level FK (gateway.game_players → battle.games) のみ
+# gateway を battle の後に配置する。
 #
 # ref には再現性のため commit SHA を入れてもよい。通常は main を pin する。
 # main 以外に振れるのは、事故復旧 / 特定リビジョンに固定した stg 検証 / bisect 時のみ。
@@ -14,18 +16,12 @@
 #   4. stg / prod は手動 workflow_dispatch で環境ごとに実行
 
 schemas:
-  - name: shared
-    repo: kenyamaneko/overload-party-common
-    path: db/schema_postgres.sql
-    ref: main
-    # shared スキーマ本体 + shared.update_updated_at() trigger function。
-
   - name: account
     repo: kenyamaneko/overload-party-account
     path: db/schema.sql
     ref: main
     # account.players / account.player_daily_battle / account.player_factions /
-    # account.user_settings。shared.update_updated_at() に依存。
+    # account.user_settings。account.update_updated_at() を自前定義。
 
   - name: battle
     repo: kenyamaneko/overload-party-battle
