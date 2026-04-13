@@ -8,7 +8,6 @@ import httpx
 logger = logging.getLogger(__name__)
 
 GITHUB_API = "https://api.github.com"
-# Secret Manager → Cloud Run 環境変数として注入（Terraform: slack_commands/main.tf）
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
 

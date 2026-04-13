@@ -6,6 +6,16 @@
   branch: main
 - name: overload-party-gateway
   branch: main
+- name: overload-party-account
+  branch: main
+- name: overload-party-card
+  branch: main
+- name: overload-party-matchmaking
+  branch: main
+- name: overload-party-shop
+  branch: main
+- name: overload-party-scenario
+  branch: main
 - name: overload-party-infra
   branch: main
 - name: overload-party-k8s

@@ -2,6 +2,7 @@
 """環境ごとのコスト発生リソースを検出し、Slack で通知する。"""
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -14,20 +15,29 @@ REGION = "asia-northeast1"
 GKE_PROJECT = "keyandnotes-platform"
 GKE_CLUSTER = "keyandnotes-shared"
 CLOUDSQL_INSTANCE = "overload-party-db"
-DEPLOYMENTS = ["gateway", "battle"]
+DEPLOYMENTS = ["gateway", "battle", "account", "card", "matchmaking", "shop", "scenario"]
 ENVIRONMENTS_YAML = Path(__file__).parent / "environments.yaml"
+
+# "リソースが存在しない" エラーのみ抑制するパターン。
+# 認証失敗 / quota / network 等はマッチさせず例外で落とす。
+_NOT_FOUND_RE = re.compile(
+    r"(?:\bNotFound\b"
+    r"|\bNOT_FOUND\b"
+    r"|\bnot\s+found\b"
+    r"|\bcould\s+not\s+be\s+found\b"
+    r"|\bdoes\s+not\s+exist\b"
+    r"|\b404\b)",
+    re.IGNORECASE,
+)
 
 
 def _is_not_found(stderr: str) -> bool:
-    return "NotFound" in stderr or "not found" in stderr or "404" in stderr
+    """stderr がリソース未存在を示すか判定します。"""
+    return bool(_NOT_FOUND_RE.search(stderr))
 
 
 def load_environments() -> dict[str, str]:
-    """監視対象の環境一覧を読み込む。
-
-    デフォルトは environments.yaml から読み込む。
-    ENVIRONMENTS_JSON 環境変数が設定されている場合はそちらを優先する。
-    """
+    """監視対象の環境一覧を読み込みます。"""
     raw = os.environ.get("ENVIRONMENTS_JSON", "")
     if raw:
         return json.loads(raw)
@@ -43,29 +53,37 @@ def _run_cmd(
     cmd: list[str], *, label: str = "cmd", allow_not_found: bool = False,
 ) -> str:
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0 and result.stderr.strip():
-        if allow_not_found and _is_not_found(result.stderr):
-            print(f"[{label}] {result.stderr.strip()}")
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        # `allow_not_found` はリソース未作成のケースのみ許可する。
+        # 認証失敗等は not-found パターンにマッチしないため例外で落とす。
+        if allow_not_found and stderr and _is_not_found(stderr):
+            print(f"[{label}] {stderr}")
             return ""
-        msg = f"[{label}] {result.stderr.strip()}"
+        detail = stderr if stderr else f"exit code {result.returncode} (no stderr)"
+        msg = f"[{label}] {detail}"
         print(msg)
         raise CommandError(msg)
     return result.stdout.strip()
 
 
 def gcloud(*args: str, allow_not_found: bool = False) -> str:
+    """gcloud コマンドを JSON 出力で実行します。"""
     return _run_cmd(["gcloud", *args, "--format=json"], label="gcloud", allow_not_found=allow_not_found)
 
 
 def gcloud_value(*args: str, allow_not_found: bool = False) -> str:
+    """gcloud コマンドをテキスト出力で実行します。"""
     return _run_cmd(["gcloud", *args], label="gcloud", allow_not_found=allow_not_found)
 
 
 def kubectl_json(*args: str, allow_not_found: bool = False) -> str:
+    """kubectl コマンドを JSON 出力で実行します。"""
     return _run_cmd(["kubectl", *args, "-o", "json"], label="kubectl", allow_not_found=allow_not_found)
 
 
 def setup_gke_credentials() -> bool:
+    """GKE クラスタの認証情報を取得します。"""
     result = subprocess.run(
         ["gcloud", "container", "clusters", "get-credentials", GKE_CLUSTER,
          "--region", REGION, "--project", GKE_PROJECT],
@@ -78,6 +96,7 @@ def setup_gke_credentials() -> bool:
 
 
 def check_cloudsql(project: str) -> tuple[list[str], list[str]]:
+    """Cloud SQL インスタンスの稼働状態を確認します。"""
     try:
         state = gcloud_value(
             "sql", "instances", "describe", CLOUDSQL_INSTANCE,
@@ -94,6 +113,7 @@ def check_cloudsql(project: str) -> tuple[list[str], list[str]]:
 
 
 def check_gke_deployments(env: str) -> tuple[list[str], list[str]]:
+    """GKE Deployment のレプリカ数を確認します。"""
     costs: list[str] = []
     errors: list[str] = []
     for deploy in DEPLOYMENTS:
@@ -119,6 +139,7 @@ def check_gke_deployments(env: str) -> tuple[list[str], list[str]]:
 
 
 def check_ingress(env: str) -> tuple[list[str], list[str]]:
+    """Ingress リソースの稼働状態を確認します。"""
     try:
         raw = kubectl_json(
             "get", "ingress", "overload-party",
@@ -142,6 +163,7 @@ def check_ingress(env: str) -> tuple[list[str], list[str]]:
 
 
 def check_static_ips(project: str) -> tuple[list[str], list[str]]:
+    """予約済み外部 IP アドレスを確認します。"""
     try:
         raw = gcloud(
             "compute", "addresses", "list",
@@ -163,6 +185,7 @@ def check_static_ips(project: str) -> tuple[list[str], list[str]]:
 
 
 def check_psc(project: str) -> tuple[list[str], list[str]]:
+    """PSC forwarding rule の稼働状態を確認します。"""
     try:
         raw = gcloud(
             "compute", "forwarding-rules", "list",
@@ -183,6 +206,7 @@ def check_psc(project: str) -> tuple[list[str], list[str]]:
 
 
 def namespace_exists(env: str) -> bool:
+    """Kubernetes namespace が存在するか確認します。"""
     result = subprocess.run(
         ["kubectl", "get", "namespace", env,
          f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}"],
@@ -194,6 +218,7 @@ def namespace_exists(env: str) -> bool:
 def check_environment(
     env: str, project: str, *, gke_available: bool = True,
 ) -> tuple[list[str], list[str]]:
+    """指定環境のコスト発生リソースを一括チェックします。"""
     costs: list[str] = []
     errors: list[str] = []
 
@@ -215,6 +240,7 @@ def check_environment(
 
 
 def notify_slack(webhook_url: str, message: str) -> None:
+    """Slack Webhook にメッセージを送信します。"""
     payload = json.dumps({"text": message}).encode()
     req = urllib.request.Request(
         webhook_url,
@@ -229,10 +255,10 @@ def notify_slack(webhook_url: str, message: str) -> None:
 
 
 def main() -> None:
+    """全環境のコスト発生リソースを確認し、Slack で通知します。"""
     jst = timezone(timedelta(hours=9))
     today = datetime.now(jst).strftime("%Y-%m-%d")
 
-    # GitHub Actions secrets 経由で注入
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
         print("SLACK_WEBHOOK_URL is not set")

@@ -12,6 +12,7 @@ DEFAULT_REF = "main"
 
 
 async def handle(response_url: str, text: str) -> None:
+    """パッケージ publish ワークフローをディスパッチします。"""
     try:
         ref = text.strip() or DEFAULT_REF
 

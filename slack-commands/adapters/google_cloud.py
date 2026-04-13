@@ -9,7 +9,7 @@ SQLADMIN_API = "https://sqladmin.googleapis.com/v1"
 
 
 async def _get_access_token() -> str:
-    """メタデータサーバーからアクセストークンを取得する。"""
+    """メタデータサーバーからアクセストークンを取得します。"""
     url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, headers={"Metadata-Flavor": "Google"}, timeout=5)
@@ -18,7 +18,7 @@ async def _get_access_token() -> str:
 
 
 async def get_activation_policy(project: str, instance: str) -> str:
-    """Cloud SQL インスタンスの activationPolicy を取得する。"""
+    """Cloud SQL インスタンスの activationPolicy を取得します。"""
     token = await _get_access_token()
     url = f"{SQLADMIN_API}/projects/{project}/instances/{instance}"
 
@@ -29,13 +29,7 @@ async def get_activation_policy(project: str, instance: str) -> str:
 
 
 async def has_pending_update(project: str, instance: str) -> bool:
-    """インスタンスに進行中の UPDATE オペレーションがあるか確認する。
-
-    Cloud SQL の operationType "UPDATE" には activationPolicy 変更のほか
-    マシンタイプ変更・ディスクリサイズ等も含まれる。
-    いずれの場合も UPDATE 進行中は patch が 409 になるため、
-    activationPolicy 変更だけを区別する必要はない。
-    """
+    """インスタンスに進行中の UPDATE オペレーションがあるか確認します。"""
     token = await _get_access_token()
     url = f"{SQLADMIN_API}/projects/{project}/operations?instance={instance}"
 
@@ -50,11 +44,11 @@ async def has_pending_update(project: str, instance: str) -> bool:
 
 
 class OperationInProgressError(Exception):
-    """Cloud SQL で別のオペレーションが進行中。"""
+    pass
 
 
 async def patch_activation_policy(project: str, instance: str, policy: str) -> str:
-    """Cloud SQL インスタンスの activationPolicy を変更し、オペレーション名を返す。"""
+    """Cloud SQL インスタンスの activationPolicy を変更し、オペレーション名を返します。"""
     token = await _get_access_token()
     url = f"{SQLADMIN_API}/projects/{project}/instances/{instance}"
     body = {"settings": {"activationPolicy": policy}}
@@ -77,7 +71,7 @@ async def patch_activation_policy(project: str, instance: str, policy: str) -> s
 async def wait_for_operation(
     project: str, operation: str, max_attempts: int = 90, interval: int = 10,
 ) -> bool:
-    """Cloud SQL オペレーションが DONE になるまでポーリングする（最大15分）。"""
+    """Cloud SQL オペレーションが DONE になるまでポーリングします（最大 15 分）。"""
     url = f"{SQLADMIN_API}/projects/{project}/operations/{operation}"
 
     async with httpx.AsyncClient() as client:

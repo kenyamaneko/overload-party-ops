@@ -13,11 +13,12 @@ ENVIRONMENTS: dict[str, str] = {
 
 
 def _parse_env(text: str) -> str | None:
-    """コマンド引数から環境名を抽出する。"""
+    """コマンド引数から環境名を抽出します。"""
     return text.strip().lower() or None
 
 
 async def handle_start(response_url: str, text: str) -> None:
+    """Cloud SQL インスタンスを起動します。"""
     try:
         env = _parse_env(text)
         if env is None:
@@ -29,9 +30,7 @@ async def handle_start(response_url: str, text: str) -> None:
             await post_in_channel(response_url, f"未対応の環境です: `{env}` (dev, stg のみ)")
             return
 
-        # activationPolicy だけではインスタンスが実際に起動完了しているか判断できない。
-        # policy=ALWAYS でもオペレーション進行中なら起動途中のため、
-        # operations.list で進行中の UPDATE（activationPolicy 変更やマシンタイプ変更等）を確認する。
+        # policy=ALWAYS でもオペレーション進行中なら起動途中のため operations.list で確認する
         policy = await get_activation_policy(project, INSTANCE)
         if policy == "ALWAYS":
             if await has_pending_update(project, INSTANCE):
@@ -56,6 +55,7 @@ async def handle_start(response_url: str, text: str) -> None:
 
 
 async def handle_stop(response_url: str, text: str) -> None:
+    """Cloud SQL インスタンスを停止します。"""
     try:
         env = _parse_env(text)
         if env is None:

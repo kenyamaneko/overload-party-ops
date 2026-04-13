@@ -9,7 +9,7 @@ dev 環境のリソースを毎晩自動停止し、コストを削減するワ�
 | Ingress & BackendConfig | `kubectl delete` で削除 |
 | 予約済み外部 IP | Ingress 削除後に RESERVED 状態の IP を削除 |
 | DNS (Cloudflare) | A レコードを `127.0.0.1` に変更 |
-| Pod (gateway, battle) | レプリカ数を 0 にスケール |
+| Pod (全 7 Deployment) | レプリカ数を 0 にスケール |
 | PSC フォワーディングルール | `cloudsql-psc-{env}` を削除 |
 | Cloud SQL | activation policy を `NEVER` に変更して停止 |
 

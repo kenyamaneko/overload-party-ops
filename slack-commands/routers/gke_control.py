@@ -5,9 +5,7 @@ from adapters.slack_response import post_in_channel
 
 logger = logging.getLogger(__name__)
 
-# GitHub Actions workflow_dispatch で GKE 操作を実行する（ADR-009）。
-# Cloud Run に gcloud/kubectl を入れるとイメージが 500MB+ 増加するため、
-# Slack コマンドはワークフローのトリガーのみ行い、実処理は GitHub Actions に委譲する。
+# イメージサイズ肥大を避けるため実処理は GitHub Actions に委譲する
 GITHUB_ORG = "kenyamaneko"
 K8S_REPO = "overload-party-k8s"
 WORKFLOW_ID = "env-lifecycle.yaml"
@@ -19,6 +17,7 @@ def _parse_env(text: str) -> str | None:
 
 
 async def handle_up(response_url: str, text: str) -> None:
+    """GKE 環境起動ワークフローをディスパッチします。"""
     try:
         env = _parse_env(text)
         if env is None:
@@ -44,6 +43,7 @@ async def handle_up(response_url: str, text: str) -> None:
 
 
 async def handle_down(response_url: str, text: str) -> None:
+    """GKE 環境停止ワークフローをディスパッチします。"""
     try:
         env = _parse_env(text)
         if env is None:

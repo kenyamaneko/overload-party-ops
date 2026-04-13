@@ -17,12 +17,7 @@ CLONE_BASE = "/tmp/drift-monitor"
 
 
 def load_targets() -> list[dict]:
-    """監視対象を読み込む。
-
-    デフォルトは targets.yaml から読み込み、
-    TARGETS_JSON 環境変数が設定されている場合はそちらを優先する。
-    各要素: {"repo": str, "environments": [{"name": str, "path": str}]}
-    """
+    """監視対象の Terraform 環境一覧を読み込みます。"""
     raw = os.environ.get("TARGETS_JSON", "")
     if raw:
         return json.loads(raw)
@@ -32,10 +27,12 @@ def load_targets() -> list[dict]:
 
 
 def run(args: list[str], cwd: str | None = None, timeout: int = 600) -> subprocess.CompletedProcess:
+    """外部コマンドを実行します。"""
     return subprocess.run(args, capture_output=True, text=True, cwd=cwd, timeout=timeout)
 
 
 def clone_repo(repo: str, token: str) -> str | None:
+    """リポジトリを shallow clone します。"""
     dest = f"{CLONE_BASE}/{repo}"
     result = run([
         "git", "clone", "--depth=1",
@@ -49,9 +46,7 @@ def clone_repo(repo: str, token: str) -> str | None:
 
 
 def terraform_plan(work_dir: str) -> tuple[int, str]:
-    """terraform init + plan を実行し (exit_code, output) を返す。
-    exit_code: 0=差分なし, 2=差分あり, 1=エラー
-    """
+    """terraform init + plan を実行し (exit_code, output) を返します。"""
     init = run(["terraform", "init", "-no-color", "-input=false"], cwd=work_dir, timeout=120)
     if init.returncode != 0:
         return 1, init.stderr.strip() or init.stdout.strip()
@@ -70,7 +65,7 @@ def terraform_plan(work_dir: str) -> tuple[int, str]:
 
 
 def _strip_init_noise(output: str) -> str:
-    """terraform init のボイラープレート行を除去して本質的な出力だけ返す。"""
+    """terraform init のボイラープレート行を除去します。"""
     noise_prefixes = (
         "Initializing the backend",
         "Successfully configured the backend",
@@ -90,7 +85,7 @@ def _strip_init_noise(output: str) -> str:
 
 
 def extract_summary(plan_output: str) -> str:
-    """plan 出力から Plan: 行と変更対象リソースを抽出する。"""
+    """plan 出力から Plan: 行と変更対象リソースを抽出します。"""
     resources: list[str] = []
     summary_line = ""
 
@@ -120,6 +115,7 @@ SLACK_TEXT_LIMIT = 3900
 
 
 def notify_slack(webhook_url: str, message: str) -> None:
+    """Slack Webhook にメッセージを送信します。"""
     if len(message) > SLACK_TEXT_LIMIT:
         message = message[:SLACK_TEXT_LIMIT] + "\n…(truncated)"
     payload = json.dumps({"text": message}).encode()
@@ -136,10 +132,10 @@ def notify_slack(webhook_url: str, message: str) -> None:
 
 
 def main() -> None:
+    """全対象環境の terraform plan を実行し、drift を検出して Slack 通知します。"""
     jst = timezone(timedelta(hours=9))
     today = datetime.now(jst).strftime("%Y-%m-%d")
 
-    # GitHub Actions secrets 経由で注入
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
         print("Error: GITHUB_TOKEN is not set", file=sys.stderr)

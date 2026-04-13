@@ -8,13 +8,13 @@ INGRESS_DELETED=false
 add_result() { RESULTS="${RESULTS}• $1\n"; }
 mark_error() { HAS_ERROR=true; }
 
-# ─── Namespace check ───
+# ─── Namespace 存在確認 ───
 NS_EXISTS=false
 if [ "${GKE_AUTH_OK}" = "true" ]; then
   kubectl get namespace "${NS}" &>/dev/null && NS_EXISTS=true
 fi
 
-# ─── Ingress & BackendConfig ───
+# ─── Ingress / BackendConfig 削除 ───
 if [ "${GKE_AUTH_OK}" != "true" ]; then
   add_result "Ingress: GKE 認証失敗のためスキップ"
 elif [ "${NS_EXISTS}" != "true" ]; then
@@ -29,7 +29,7 @@ else
   add_result "Ingress: 削除失敗"; mark_error
 fi
 
-# ─── Reserved IPs ───
+# ─── 予約 IP 削除 ───
 if [ "${INGRESS_DELETED}" = "true" ]; then
   echo "Waiting for LB cleanup..."
   sleep 60
@@ -47,20 +47,32 @@ if [ -z "${IP_LIST}" ]; then
   add_result "予約 IP: なし"
 else
   DELETED=""
+  IN_USE=""
   FAILED=""
+  # in-use の IP は課金が継続するため failure として Slack / exit code に反映する
   for IP_NAME in ${IP_LIST}; do
-    if gcloud compute addresses delete "${IP_NAME}" \
-         --global --project="${GKE_PROJECT}" --quiet 2>&1; then
+    DELETE_OUTPUT=$(gcloud compute addresses delete "${IP_NAME}" \
+      --global --project="${GKE_PROJECT}" --quiet 2>&1)
+    DELETE_RC=$?
+    if [ ${DELETE_RC} -eq 0 ]; then
       DELETED="${DELETED:+${DELETED}, }${IP_NAME}"
+    elif echo "${DELETE_OUTPUT}" | grep -qiE 'in[- ]?use|resourceInUse'; then
+      IN_USE="${IN_USE:+${IN_USE}, }${IP_NAME}"
     else
       FAILED="${FAILED:+${FAILED}, }${IP_NAME}"
     fi
   done
   MSG="予約 IP: "
   [ -n "${DELETED}" ] && MSG="${MSG}${DELETED} を削除"
-  if [ -n "${FAILED}" ]; then
+  if [ -n "${IN_USE}" ]; then
     [ -n "${DELETED}" ] && MSG="${MSG} / "
-    MSG="${MSG}${FAILED} は使用中のためスキップ"
+    MSG="${MSG}${IN_USE} は使用中 (課金継続中)"
+    mark_error
+  fi
+  if [ -n "${FAILED}" ]; then
+    { [ -n "${DELETED}" ] || [ -n "${IN_USE}" ]; } && MSG="${MSG} / "
+    MSG="${MSG}${FAILED} 削除失敗"
+    mark_error
   fi
   add_result "${MSG}"
 fi
@@ -85,14 +97,15 @@ else
   add_result "DNS: 変更失敗 (${ERROR})"; mark_error
 fi
 
-# ─── Pods ───
+# ─── Pod スケールダウン ───
+# newsfeed は Cloud Run Job なので対象外
 if [ "${GKE_AUTH_OK}" != "true" ]; then
   add_result "Pod: GKE 認証失敗のためスキップ"
 elif [ "${NS_EXISTS}" != "true" ]; then
   add_result "Pod: namespace 不在のためスキップ"
 else
   POD_PARTS=""
-  for DEPLOY in gateway battle; do
+  for DEPLOY in gateway battle account card matchmaking shop scenario; do
     if ! kubectl get deployment "${DEPLOY}" -n "${NS}" &>/dev/null; then
       POD_PARTS="${POD_PARTS}${DEPLOY} 存在しない, "
     elif kubectl scale deployment "${DEPLOY}" --replicas=0 -n "${NS}" &>/dev/null; then
@@ -135,7 +148,7 @@ else
   add_result "Cloud SQL: 停止失敗"; mark_error
 fi
 
-# ─── Output ───
+# ─── 結果出力 ───
 {
   echo "results<<EOF"
   echo -e "${RESULTS}"
