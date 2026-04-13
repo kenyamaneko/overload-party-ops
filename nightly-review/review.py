@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import traceback
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,12 +16,14 @@ import yaml
 GITHUB_ORG = "kenyamaneko"
 MAX_DIFF_CHARS = 150000
 MAX_FILE_CONTENT_CHARS = 300000
+# Claude API のコンテキスト上限を踏まえた安全圏。超える場合はレビュー不能とする
+MAX_PROMPT_CHARS = 400000
 
 REPOS_YAML = Path(__file__).parent / "repos.yaml"
 
 
 def load_repos() -> list[dict]:
-    """リポジトリ設定を読み込む。各要素は {"name": str, "branch": str | None}。"""
+    """レビュー対象リポジトリの設定を読み込みます。"""
     raw = os.environ.get("REPOS_JSON", "")
     if raw:
         return json.loads(raw)
@@ -56,7 +59,20 @@ class GhError(Exception):
     pass
 
 
+class PromptTooLargeError(Exception):
+    pass
+
+
+class ClaudeError(Exception):
+    pass
+
+
+class IssueCreateError(Exception):
+    pass
+
+
 def gh(*args: str) -> str:
+    """gh CLI コマンドを実行します。"""
     result = subprocess.run(
         ["gh", *args],
         capture_output=True, text=True,
@@ -69,6 +85,7 @@ def gh(*args: str) -> str:
 
 
 def ensure_label(repo: str, label: str) -> None:
+    """GitHub リポジトリにラベルが存在しなければ作成します。"""
     try:
         existing = gh("label", "list", "--repo", f"{GITHUB_ORG}/{repo}", "--search", label)
     except GhError as e:
@@ -87,6 +104,7 @@ def ensure_label(repo: str, label: str) -> None:
 
 
 def issue_exists(repo: str, search_key: str) -> bool:
+    """同名の Issue が既に存在するか確認します。"""
     try:
         output = gh(
             "issue", "list",
@@ -102,7 +120,7 @@ def issue_exists(repo: str, search_key: str) -> bool:
 
 
 def get_diff(repo: str, branch: str, since: str) -> tuple[str | None, list[str]]:
-    """差分テキストと変更ファイル名リストを返す。"""
+    """指定日時以降の差分テキストと変更ファイル名リストを返します。"""
     commits_json = gh(
         "api", f"repos/{GITHUB_ORG}/{repo}/commits?sha={branch}&since={since}",
         "-q", "length",
@@ -113,7 +131,7 @@ def get_diff(repo: str, branch: str, since: str) -> tuple[str | None, list[str]]
 
     compare_endpoint = f"repos/{GITHUB_ORG}/{repo}/compare/{branch}~{commit_count}...{branch}"
 
-    # ファイル名と差分を1回の API コールで取得
+    # ファイル名と差分を 1 回の API コールで取得
     combined = gh(
         "api", compare_endpoint,
         "--jq", '.files[] | select(.patch != null) | {filename, patch}',
@@ -140,7 +158,7 @@ def get_diff(repo: str, branch: str, since: str) -> tuple[str | None, list[str]]
 
 
 def get_file_contents(repo: str, branch: str, filenames: list[str], limit: int) -> str:
-    """変更ファイルの全文を GitHub API 経由で取得し、制限内で結合して返す。"""
+    """変更ファイルの全文を GitHub API 経由で取得し、制限内で結合して返します。"""
     sections: list[str] = []
     total = 0
 
@@ -153,7 +171,6 @@ def get_file_contents(repo: str, branch: str, filenames: list[str], limit: int) 
         except GhError:
             continue
 
-        # GitHub API は Base64 でエンコードされたコンテンツを返す
         try:
             decoded = base64.b64decode(content).decode("utf-8", errors="replace")
         except Exception:
@@ -169,6 +186,7 @@ def get_file_contents(repo: str, branch: str, filenames: list[str], limit: int) 
 
 
 def run_claude(prompt: str) -> str | None:
+    """Claude CLI にプロンプトを渡してレビュー結果を取得します。"""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(prompt)
         f.flush()
@@ -183,19 +201,15 @@ def run_claude(prompt: str) -> str | None:
             os.unlink(f.name)
 
     if result.returncode != 0:
-        print(f"  Error: claude exited with code {result.returncode}: {result.stderr.strip()}")
-        return None
+        stderr = result.stderr.strip() or "(stderr 空)"
+        raise ClaudeError(f"exit code {result.returncode}: {stderr}")
 
     body = result.stdout.strip()
     return body if body else None
 
 
 def truncate_diff(diff: str, limit: int) -> tuple[str, list[str]]:
-    """差分をファイル単位で切り捨てる。
-
-    Returns:
-        (収まった差分テキスト, 切り捨てられたファイル名リスト)
-    """
+    """差分をファイル単位で切り捨て、(収まったテキスト, 省略ファイル名リスト) を返します。"""
     if len(diff) <= limit:
         return diff, []
 
@@ -218,6 +232,7 @@ def truncate_diff(diff: str, limit: int) -> tuple[str, list[str]]:
 
 
 def review_diff(repo: str, branch: str, yesterday: str) -> str | None:
+    """指定リポジトリの前日差分を Claude でレビューします。"""
     since = f"{yesterday}T00:00:00Z"
     diff, filenames = get_diff(repo, branch, since)
     if diff is None:
@@ -231,7 +246,6 @@ def review_diff(repo: str, branch: str, yesterday: str) -> str | None:
         files = ", ".join(omitted)
         note = f"（注：差分が大きいため以下のファイルは省略されています: {files}）\n"
 
-    # 変更ファイルの全文を取得してコンテキストとして添付
     file_context = ""
     if filenames:
         print(f"  Fetching full content for {len(filenames)} changed files...")
@@ -243,11 +257,17 @@ def review_diff(repo: str, branch: str, yesterday: str) -> str | None:
             )
 
     prompt = f"{DIFF_PROMPT}{note}\n\n```diff\n{diff}\n```{file_context}"
+    if len(prompt) > MAX_PROMPT_CHARS:
+        raise PromptTooLargeError(
+            f"プロンプト {len(prompt):,} chars "
+            f"(diff={len(diff):,} chars, files={len(filenames)}) "
+            f"が上限 {MAX_PROMPT_CHARS:,} を超過"
+        )
     return run_claude(prompt)
 
 
-def create_issue(repo: str, title: str, label: str, body: str) -> str | None:
-    """Create a GitHub Issue and return its URL, or None on failure."""
+def create_issue(repo: str, title: str, label: str, body: str) -> str:
+    """GitHub Issue を作成し、URL を返します。"""
     result = subprocess.run(
         ["gh", "issue", "create",
          "--repo", f"{GITHUB_ORG}/{repo}",
@@ -257,19 +277,20 @@ def create_issue(repo: str, title: str, label: str, body: str) -> str | None:
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        print(f"  Error: failed to create issue: {result.stderr.strip()}")
-        return None
+        stderr = result.stderr.strip() or "(stderr 空)"
+        raise IssueCreateError(stderr)
     issue_url = result.stdout.strip()
     print(f"  Created: {issue_url}")
     return issue_url
 
 
 def is_no_issues(body: str) -> bool:
+    """レビュー結果が LGTM（指摘なし）かどうかを判定します。"""
     return body.strip() == "LGTM"
 
 
 def notify_slack(title: str, body: str) -> None:
-    # GitHub Actions secrets 経由で注入
+    """Slack Webhook にレビュー結果を通知します。"""
     # 通知失敗はジョブ全体を止めるほどではないため Warning のみ出力して継続する
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
@@ -292,7 +313,64 @@ def notify_slack(title: str, body: str) -> None:
         print(f"  Warning: Slack notification failed: {e}")
 
 
+def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, label: str) -> bool:
+    """単一リポジトリをレビューします。エラー発生時は True、正常終了時は False を返します。"""
+    repo = entry["name"]
+    branch = entry.get("branch")
+    print(f"=== {repo} ===")
+
+    if not branch:
+        msg = f"`{repo}`: branch が未設定のためスキップしました"
+        print(f"  {msg}")
+        notify_slack("Nightly Review 設定エラー", msg)
+        return True
+
+    title = f"[自動レビュー {today}] 差分 {repo}"
+
+    if skip_if_exists and issue_exists(repo, f"[自動レビュー {today}] 差分"):
+        print("  Issue already exists, skipping.")
+        return False
+
+    ensure_label(repo, label)
+
+    try:
+        body = review_diff(repo, branch, yesterday)
+    except PromptTooLargeError as e:
+        print(f"  Error: {e}")
+        notify_slack(
+            f"Nightly Review スキップ: {repo}",
+            f"変更が多すぎて自動レビューできません\n{e}",
+        )
+        return True
+    except ClaudeError as e:
+        print(f"  Error: {e}")
+        notify_slack(f"Nightly Review エラー: {repo}", f"Claude CLI 失敗\n{e}")
+        return True
+    except GhError as e:
+        print(f"  Error: {e}")
+        notify_slack(f"Nightly Review エラー: {repo}", f"GitHub API 失敗\n{e}")
+        return True
+
+    if body is None:
+        return False
+
+    if is_no_issues(body):
+        print("  No issues found, skipping issue creation.")
+        return False
+
+    try:
+        issue_url = create_issue(repo, title, label, body)
+    except IssueCreateError as e:
+        print(f"  Error: {e}")
+        notify_slack(f"Nightly Review エラー: {repo}", f"Issue 作成失敗\n{e}")
+        return True
+
+    notify_slack(title, f"レビューコメントがあります\n{issue_url}")
+    return False
+
+
 def main() -> None:
+    """全リポジトリの前日差分をレビューし、Issue を作成します。"""
     jst = timezone(timedelta(hours=9))
     today = datetime.now(jst).strftime("%Y-%m-%d")
     yesterday = (datetime.now(jst) - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -302,46 +380,28 @@ def main() -> None:
 
     has_error = False
 
-    repos = load_repos()
-
-    for entry in repos:
-        repo = entry["name"]
-        branch = entry.get("branch")
-        print(f"=== {repo} ===")
-
-        if not branch:
-            msg = f"`{repo}`: branch が未設定のためスキップしました"
-            print(f"  {msg}")
-            notify_slack("Nightly Review 設定エラー", msg)
-            has_error = True
-            continue
-
-        title = f"[自動レビュー {today}] 差分 {repo}"
-
-        if skip_if_exists and issue_exists(repo, f"[自動レビュー {today}] 差分"):
-            print("  Issue already exists, skipping.")
-            continue
-
-        ensure_label(repo, label)
-
-        try:
-            body = review_diff(repo, branch, yesterday)
-        except GhError:
-            has_error = True
-            continue
-
-        if body is None:
-            continue
-
-        if is_no_issues(body):
-            print("  No issues found, skipping issue creation.")
-            continue
-
-        issue_url = create_issue(repo, title, label, body)
-        if issue_url is None:
-            has_error = True
-        else:
-            notify_slack(title, f"レビューコメントがあります\n{issue_url}")
+    try:
+        repos = load_repos()
+        for entry in repos:
+            try:
+                if review_repo(entry, today, yesterday, skip_if_exists, label):
+                    has_error = True
+            except Exception:
+                # 想定外のエラーは文言そのまま Slack に出して握りつぶさない
+                tb = traceback.format_exc()
+                print(tb)
+                repo = entry.get("name", "(unknown)")
+                notify_slack(
+                    f"Nightly Review 想定外エラー: {repo}",
+                    f"```\n{tb[-2000:]}\n```",
+                )
+                has_error = True
+    except Exception:
+        # リポジトリループ前（設定読み込み等）の想定外エラー
+        tb = traceback.format_exc()
+        print(tb)
+        notify_slack("Nightly Review 想定外エラー", f"```\n{tb[-2000:]}\n```")
+        sys.exit(1)
 
     print("=== Nightly review complete ===")
     sys.exit(1 if has_error else 0)
