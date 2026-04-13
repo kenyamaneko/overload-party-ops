@@ -78,6 +78,19 @@ class IssueCreateError(Exception):
     pass
 
 
+def _format_cmd_failure(stderr: str, stdout: str) -> str:
+    """外部コマンド失敗時の詳細メッセージを整形します。CLI によっては stdout にしかエラーを吐かないため両方拾う。"""
+    stderr_s = (stderr or "").strip()
+    stdout_s = (stdout or "").strip()
+    if stderr_s and stdout_s:
+        return f"stderr: {stderr_s}\nstdout: {stdout_s}"
+    if stderr_s:
+        return f"stderr: {stderr_s}"
+    if stdout_s:
+        return f"stdout: {stdout_s}"
+    return "(stderr/stdout ともに空)"
+
+
 def gh(*args: str) -> str:
     """gh CLI コマンドを実行します。"""
     result = subprocess.run(
@@ -208,8 +221,9 @@ def run_claude(prompt: str) -> str | None:
             os.unlink(f.name)
 
     if result.returncode != 0:
-        stderr = result.stderr.strip() or "(stderr 空)"
-        raise ClaudeError(f"exit code {result.returncode}: {stderr}")
+        # Claude CLI はエラーを stdout に吐くことがあるため両方載せる
+        detail = _format_cmd_failure(result.stderr, result.stdout)
+        raise ClaudeError(f"exit code {result.returncode}: {detail}")
 
     body = result.stdout.strip()
     return body if body else None
@@ -284,8 +298,7 @@ def create_issue(repo: str, title: str, label: str, body: str) -> str:
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        stderr = result.stderr.strip() or "(stderr 空)"
-        raise IssueCreateError(stderr)
+        raise IssueCreateError(_format_cmd_failure(result.stderr, result.stdout))
     issue_url = result.stdout.strip()
     print(f"  Created: {issue_url}")
     return issue_url
@@ -343,6 +356,7 @@ def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, l
     try:
         body = review_diff(repo, branch, yesterday)
     except PromptTooLargeError as e:
+        # 文字数計算情報は短いので Slack にも載せる
         print(f"  Error: {e}")
         notify_slack(
             f"Nightly Review スキップ: {repo}",
@@ -350,12 +364,13 @@ def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, l
         )
         return True
     except ClaudeError as e:
+        # stderr/stdout 詳細は print で Actions ログに流す。Slack は短く
         print(f"  Error: {e}")
-        notify_slack(f"Nightly Review エラー: {repo}", f"Claude CLI 失敗\n{e}")
+        notify_slack(f"Nightly Review エラー: {repo}", "Claude CLI 失敗 (詳細はログ)")
         return True
     except GhError as e:
         print(f"  Error: {e}")
-        notify_slack(f"Nightly Review エラー: {repo}", f"GitHub API 失敗\n{e}")
+        notify_slack(f"Nightly Review エラー: {repo}", "GitHub API 失敗 (詳細はログ)")
         return True
 
     if body is None:
@@ -369,7 +384,7 @@ def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, l
         issue_url = create_issue(repo, title, label, body)
     except IssueCreateError as e:
         print(f"  Error: {e}")
-        notify_slack(f"Nightly Review エラー: {repo}", f"Issue 作成失敗\n{e}")
+        notify_slack(f"Nightly Review エラー: {repo}", "Issue 作成失敗 (詳細はログ)")
         return True
 
     notify_slack(title, f"レビューコメントがあります\n{issue_url}")
@@ -394,20 +409,22 @@ def main() -> None:
                 if review_repo(entry, today, yesterday, skip_if_exists, label):
                     has_error = True
             except Exception:
-                # 想定外のエラーは文言そのまま Slack に出して握りつぶさない
+                # Traceback は print で Actions ログに流す。Slack は短く
                 tb = traceback.format_exc()
                 print(tb)
                 repo = entry.get("name", "(unknown)")
+                exc_line = tb.strip().splitlines()[-1] if tb.strip() else "(unknown)"
                 notify_slack(
                     f"Nightly Review 想定外エラー: {repo}",
-                    f"```\n{tb[-2000:]}\n```",
+                    f"{exc_line} (詳細はログ)",
                 )
                 has_error = True
     except Exception:
         # リポジトリループ前（設定読み込み等）の想定外エラー
         tb = traceback.format_exc()
         print(tb)
-        notify_slack("Nightly Review 想定外エラー", f"```\n{tb[-2000:]}\n```")
+        exc_line = tb.strip().splitlines()[-1] if tb.strip() else "(unknown)"
+        notify_slack("Nightly Review 想定外エラー", f"{exc_line} (詳細はログ)")
         sys.exit(1)
 
     print("=== Nightly review complete ===")

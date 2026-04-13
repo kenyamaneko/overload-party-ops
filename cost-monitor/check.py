@@ -49,6 +49,24 @@ class CommandError(Exception):
     pass
 
 
+def format_cmd_failure(stderr: str, stdout: str, returncode: int) -> str:
+    """外部コマンド失敗時に stderr/stdout を両方拾った詳細メッセージを返す。
+
+    CLI によっては stderr が空で stdout にしかエラーを吐かないケースがあり
+    (Claude CLI 等)、片方だけを見ると silent failure の原因になる。
+    subprocess を直接扱う箇所は必ずこのヘルパーを通すこと。
+    """
+    stderr_s = (stderr or "").strip()
+    stdout_s = (stdout or "").strip()
+    if stderr_s and stdout_s:
+        return f"stderr: {stderr_s}\nstdout: {stdout_s}"
+    if stderr_s:
+        return stderr_s
+    if stdout_s:
+        return f"stdout: {stdout_s}"
+    return f"exit code {returncode} (stderr/stdout ともに空)"
+
+
 def _run_cmd(
     cmd: list[str], *, label: str = "cmd", allow_not_found: bool = False,
 ) -> str:
@@ -60,10 +78,10 @@ def _run_cmd(
         if allow_not_found and stderr and _is_not_found(stderr):
             print(f"[{label}] {stderr}")
             return ""
-        detail = stderr if stderr else f"exit code {result.returncode} (no stderr)"
-        msg = f"[{label}] {detail}"
-        print(msg)
-        raise CommandError(msg)
+        # 詳細は print で Actions ログに流し、Slack 向けの例外メッセージは短く保つ
+        detail = format_cmd_failure(result.stderr, result.stdout, result.returncode)
+        print(f"[{label}] {detail}")
+        raise CommandError(f"{label} 実行失敗 (exit {result.returncode})")
     return result.stdout.strip()
 
 
@@ -82,17 +100,23 @@ def kubectl_json(*args: str, allow_not_found: bool = False) -> str:
     return _run_cmd(["kubectl", *args, "-o", "json"], label="kubectl", allow_not_found=allow_not_found)
 
 
-def setup_gke_credentials() -> bool:
-    """GKE クラスタの認証情報を取得します。"""
+def setup_gke_credentials() -> tuple[bool, str | None]:
+    """GKE クラスタの認証情報を取得します。
+
+    成功時: (True, None) / 失敗時: (False, エラー詳細)。
+    失敗詳細は呼び出し側で Slack に必ず流すこと。print だけだと Actions
+    ログにしか出ず、ユーザーは気付けない。
+    """
     result = subprocess.run(
         ["gcloud", "container", "clusters", "get-credentials", GKE_CLUSTER,
          "--region", REGION, "--project", GKE_PROJECT],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        print(f"[gcloud] GKE credentials failed: {result.stderr.strip()}")
-        return False
-    return True
+        detail = format_cmd_failure(result.stderr, result.stdout, result.returncode)
+        print(f"[gcloud] GKE credentials failed: {detail}")
+        return False, "GKE 認証失敗 (詳細はログ)"
+    return True, None
 
 
 def check_cloudsql(project: str) -> tuple[list[str], list[str]]:
@@ -205,14 +229,26 @@ def check_psc(project: str) -> tuple[list[str], list[str]]:
     return costs, []
 
 
-def namespace_exists(env: str) -> bool:
-    """Kubernetes namespace が存在するか確認します。"""
+def namespace_exists(env: str) -> tuple[bool, str | None]:
+    """Kubernetes namespace が存在するか確認します。
+
+    戻り値: (存在するか, エラー詳細)。NotFound は (False, None)、
+    それ以外 (認証失敗/RBAC 等) は (False, エラー詳細) を返し、呼び出し側で
+    Slack に流すこと。
+    """
     result = subprocess.run(
         ["kubectl", "get", "namespace", env,
          f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}"],
         capture_output=True, text=True,
     )
-    return result.returncode == 0
+    if result.returncode == 0:
+        return True, None
+    combined = f"{result.stderr}\n{result.stdout}"
+    if _is_not_found(combined):
+        return False, None
+    detail = format_cmd_failure(result.stderr, result.stdout, result.returncode)
+    print(f"[kubectl] namespace check failed: {detail}")
+    return False, f"Namespace `{env}` 確認失敗 (詳細はログ)"
 
 
 def check_environment(
@@ -227,16 +263,30 @@ def check_environment(
         errors.extend(result[1])
 
     _collect(check_cloudsql(project))
-    if gke_available and namespace_exists(env):
-        _collect(check_gke_deployments(env))
-        _collect(check_ingress(env))
-    elif not gke_available:
-        print("GKE credentials unavailable, skipping GKE checks.")
+    if gke_available:
+        ns_ok, ns_err = namespace_exists(env)
+        if ns_err:
+            errors.append(ns_err)
+        if ns_ok:
+            _collect(check_gke_deployments(env))
+            _collect(check_ingress(env))
+        elif not ns_err:
+            print(f"Namespace '{env}' not found, skipping GKE checks.")
     else:
-        print(f"Namespace '{env}' not found, skipping GKE checks.")
+        print("GKE credentials unavailable, skipping GKE checks.")
     _collect(check_static_ips(project))
     _collect(check_psc(project))
     return costs, errors
+
+
+def _actions_run_url() -> str:
+    """GitHub Actions 実行中なら当該 run の URL を返します。ローカル実行時は空文字。"""
+    server = os.environ.get("GITHUB_SERVER_URL", "").rstrip("/")
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    if server and repo and run_id:
+        return f"{server}/{repo}/actions/runs/{run_id}"
+    return ""
 
 
 def notify_slack(webhook_url: str, message: str) -> None:
@@ -269,9 +319,12 @@ def main() -> None:
         print("No environments loaded")
         sys.exit(1)
 
-    gke_available = setup_gke_credentials()
+    gke_available, gke_auth_err = setup_gke_credentials()
     all_costs: dict[str, list[str]] = {}
     all_errors: dict[str, list[str]] = {}
+    # GKE 認証失敗は全環境共通のエラーとして Slack に必ず載せる
+    if gke_auth_err:
+        all_errors["(shared)"] = [gke_auth_err]
 
     for env, project in environments.items():
         print(f"=== Checking {env} ({project}) ===")
@@ -305,7 +358,12 @@ def main() -> None:
             lines.append("")
 
     if all_errors:
-        lines.append(f":x: *[コスト確認 {today}] チェックエラー*")
+        # 詳細は Actions ログに出ているため、ユーザーが辿れるよう URL を載せる
+        run_url = _actions_run_url()
+        header = f":x: *[コスト確認 {today}] チェックエラー*"
+        if run_url:
+            header += f" <{run_url}|ログ>"
+        lines.append(header)
         lines.append("")
         for env, errors in all_errors.items():
             lines.append(f"*{env}*")
