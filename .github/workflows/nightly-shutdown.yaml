@@ -20,7 +20,7 @@ permissions:
   id-token: write
 
 env:
-  GKE_CLUSTER: keyandnotes-shared
+  GKE_CLUSTER: keyandnotes-main
   GKE_REGION: asia-northeast1
   GKE_PROJECT: keyandnotes-platform
 

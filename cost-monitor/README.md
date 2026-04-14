@@ -12,7 +12,7 @@ dev/stg 環境でコストが発生しているリソースを検出し、Slack 
 | 予約済み外部 IP | status=RESERVED, addressType=EXTERNAL | ~$3.65/mo |
 | PSC forwarding rule | target が serviceAttachments | - |
 
-GKE 関連チェック（Deployment, Ingress）は共有クラスタ `keyandnotes-shared`（`keyandnotes-platform` プロジェクト）に対して実行する。namespace が存在しない環境はスキップされる。
+GKE 関連チェック（Deployment, Ingress）は共有クラスタ `keyandnotes-main`（`keyandnotes-platform` プロジェクト）に対して実行する。namespace が存在しない環境はスキップされる。
 
 ## スケジュール
 

@@ -13,7 +13,7 @@ import yaml
 
 REGION = "asia-northeast1"
 GKE_PROJECT = "keyandnotes-platform"
-GKE_CLUSTER = "keyandnotes-shared"
+GKE_CLUSTER = "keyandnotes-main"
 CLOUDSQL_INSTANCE = "overload-party-db"
 DEPLOYMENTS = ["gateway", "battle", "account", "card", "matchmaking", "shop", "scenario"]
 ENVIRONMENTS_YAML = Path(__file__).parent / "environments.yaml"
