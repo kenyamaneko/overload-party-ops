@@ -2,6 +2,11 @@
 set +e
 
 NS="overload-party-${ENV}"
+# dev / stg が共有する nodepool。ADR-018 で Pod scale 0 方式から
+# nodepool 0 ノード resize 方式に切り替えており、VM 課金はここを 0 に
+# することで止まる。dev と stg の shutdown は同じ pool を落とすため、
+# 片方の shutdown がもう片方の Pod も停止させる（運用上許容）。
+NODEPOOL_DEV_STG="keyandnotes-main-dev"
 HAS_ERROR=false
 RESULTS=""
 INGRESS_DELETED=false
@@ -78,7 +83,29 @@ else
   fi
 fi
 
+# ─── DNS ───
+if [ "${ENV}" = "dev" ]; then
+  RECORD_ID="${CLOUDFLARE_DNS_RECORD_ID_DEV}"
+else
+  RECORD_ID="${CLOUDFLARE_DNS_RECORD_ID_STG}"
+fi
+
+RESPONSE=$(curl -s -X PATCH \
+  "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
+  -H "Authorization: Bearer ${CLOUDFLARE_DNS_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data '{"content": "127.0.0.1", "proxied": false}')
+
+if echo "${RESPONSE}" | jq -e '.success' >/dev/null 2>&1; then
+  add_result "DNS: 127.0.0.1 に変更"
+else
+  log_cmd_failure "DNS 変更失敗" "${RESPONSE}"
+  add_result "DNS: 変更失敗 (詳細はログ)"; mark_error
+fi
+
 # ─── 予約 IP 削除 ───
+# Ingress 削除直後は LB 参照が残り IP が IN_USE のままになるため、
+# 実削除の直前にだけ LB cleanup を待つ。
 if [ "${INGRESS_DELETED}" = "true" ]; then
   echo "Waiting for LB cleanup..."
   sleep 60
@@ -130,55 +157,6 @@ else
   add_result "${MSG}"
 fi
 
-# ─── DNS ───
-if [ "${ENV}" = "dev" ]; then
-  RECORD_ID="${CLOUDFLARE_DNS_RECORD_ID_DEV}"
-else
-  RECORD_ID="${CLOUDFLARE_DNS_RECORD_ID_STG}"
-fi
-
-RESPONSE=$(curl -s -X PATCH \
-  "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
-  -H "Authorization: Bearer ${CLOUDFLARE_DNS_API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  --data '{"content": "127.0.0.1", "proxied": false}')
-
-if echo "${RESPONSE}" | jq -e '.success' >/dev/null 2>&1; then
-  add_result "DNS: 127.0.0.1 に変更"
-else
-  log_cmd_failure "DNS 変更失敗" "${RESPONSE}"
-  add_result "DNS: 変更失敗 (詳細はログ)"; mark_error
-fi
-
-# ─── Pod スケールダウン ───
-# newsfeed は Cloud Run Job なので対象外
-if [ "${GKE_AUTH_OK}" != "true" ]; then
-  add_result "Pod: GKE 認証失敗のためスキップ"
-elif [ "${NS_EXISTS}" != "true" ]; then
-  add_result "Pod: namespace 不在のためスキップ"
-else
-  POD_PARTS=""
-  for DEPLOY in gateway battle account card matchmaking shop scenario; do
-    GET_OUT=$(kubectl get deployment "${DEPLOY}" -n "${NS}" 2>&1)
-    GET_RC=$?
-    if [ ${GET_RC} -ne 0 ] && is_not_found "${GET_OUT}"; then
-      POD_PARTS="${POD_PARTS}${DEPLOY} 存在しない, "
-    elif [ ${GET_RC} -ne 0 ]; then
-      log_cmd_failure "Deployment ${DEPLOY} 確認失敗" "${GET_OUT}"
-      POD_PARTS="${POD_PARTS}${DEPLOY} 確認失敗, "; mark_error
-    else
-      SCALE_OUT=$(kubectl scale deployment "${DEPLOY}" --replicas=0 -n "${NS}" 2>&1)
-      if [ $? -eq 0 ]; then
-        POD_PARTS="${POD_PARTS}${DEPLOY} → 0, "
-      else
-        log_cmd_failure "Deployment ${DEPLOY} スケール失敗" "${SCALE_OUT}"
-        POD_PARTS="${POD_PARTS}${DEPLOY} スケール失敗, "; mark_error
-      fi
-    fi
-  done
-  add_result "Pod: ${POD_PARTS%, }"
-fi
-
 # ─── PSC ───
 PSC_RULE="cloudsql-psc-${ENV}"
 PSC_DESC_OUT=$(gcloud compute forwarding-rules describe "${PSC_RULE}" \
@@ -198,6 +176,25 @@ else
     log_cmd_failure "PSC ${PSC_RULE} 削除失敗" "${PSC_DEL_OUT}"
     add_result "PSC: ${PSC_RULE} の削除失敗 (詳細はログ)"; mark_error
   fi
+fi
+
+# ─── Nodepool を 0 ノードに resize ───
+# ADR-018 決定により Pod scale 0 方式から nodepool resize 方式へ変更。
+# Standard モードでは Pod を 0 にしても VM 課金は止まらないため、
+# nodepool 自体を 0 ノードにすることで VM 課金を止める。
+# dev と stg は同一 nodepool を共有しているので、どちらの ENV で
+# shutdown しても同じ pool を 0 にする（冪等）。
+RESIZE_OUT=$(gcloud container clusters resize "${GKE_CLUSTER}" \
+  --node-pool="${NODEPOOL_DEV_STG}" \
+  --num-nodes=0 \
+  --region="${GKE_REGION}" \
+  --project="${GKE_PROJECT}" \
+  --quiet 2>&1)
+if [ $? -eq 0 ]; then
+  add_result "Nodepool: ${NODEPOOL_DEV_STG} を 0 ノードに resize (dev/stg 共有)"
+else
+  log_cmd_failure "Nodepool resize 失敗" "${RESIZE_OUT}"
+  add_result "Nodepool: ${NODEPOOL_DEV_STG} resize 失敗 (詳細はログ)"; mark_error
 fi
 
 # ─── Cloud SQL ───

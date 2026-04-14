@@ -4,14 +4,18 @@ dev 環境のリソースを毎晩自動停止し、コストを削減するワ�
 
 ## 停止対象リソース
 
-| リソース | 操作 |
-|---|---|
-| Ingress & BackendConfig | `kubectl delete` で削除 |
-| 予約済み外部 IP | Ingress 削除後に RESERVED 状態の IP を削除 |
-| DNS (Cloudflare) | A レコードを `127.0.0.1` に変更 |
-| Pod (全 7 Deployment) | レプリカ数を 0 にスケール |
-| PSC フォワーディングルール | `cloudsql-psc-{env}` を削除 |
-| Cloud SQL | activation policy を `NEVER` に変更して停止 |
+実行順序（[ADR-018](../../overload-party-common/docs/adr/018-argocd-gitops-and-nodepool-based-shutdown.md) に準拠）:
+
+| # | リソース | 操作 |
+|---|---|---|
+| 1 | Ingress & BackendConfig | `kubectl delete` で削除 |
+| 2 | DNS (Cloudflare) | A レコードを `127.0.0.1` に変更 |
+| 3 | 予約済み外部 IP | LB cleanup 待機後、RESERVED 状態の IP を削除 |
+| 4 | PSC フォワーディングルール | `cloudsql-psc-{env}` を削除 |
+| 5 | GKE Nodepool | dev/stg 共有 nodepool `keyandnotes-main-dev` を 0 ノードに resize |
+| 6 | Cloud SQL | activation policy を `NEVER` に変更して停止 |
+
+Standard モードでは Pod を 0 レプリカにしても VM 課金は止まらないため、nodepool 自体を 0 ノードに resize する（ADR-018）。dev / stg は同一 nodepool を共有しているため、片方の shutdown で両方の Pod が停止する。
 
 ## スケジュール
 
