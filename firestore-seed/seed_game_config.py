@@ -4,7 +4,7 @@
 Firestore Native モードの `game_config` コレクションに投入する。
 
 使い方:
-    # 本番/ステージング/dev の GCP プロジェクト指定
+    # 本番/ステージング/dev の Google Cloud プロジェクト指定
     python3 seed_game_config.py --project <PROJECT_ID>
 
     # ローカルエミュレーター接続 (別シェルで以下を起動)
@@ -50,7 +50,7 @@ def seed(project: str, overwrite: bool) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Seed Firestore game_config")
-    parser.add_argument("--project", required=True, help="GCP project ID")
+    parser.add_argument("--project", required=True, help="Google Cloud project ID")
     parser.add_argument(
         "--overwrite",
         action="store_true",

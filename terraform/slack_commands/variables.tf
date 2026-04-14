@@ -1,10 +1,10 @@
 variable "project_id" {
-  description = "GCP project ID (ops project)"
+  description = "Google Cloud project ID (ops project)"
   type        = string
 }
 
 variable "region" {
-  description = "GCP region"
+  description = "Google Cloud region"
   type        = string
   default     = "asia-northeast1"
 }
@@ -33,7 +33,7 @@ variable "dispatch_secret" {
 }
 
 variable "cloudsql_projects" {
-  description = "Cloud SQL 操作を許可する GCP プロジェクト ID のリスト"
+  description = "Cloud SQL 操作を許可する Google Cloud プロジェクト ID のリスト"
   type        = list(string)
   default     = ["overload-party-dev", "overload-party-stg"]
 }

@@ -59,4 +59,4 @@ plan 出力からは `Plan:` 行と変更対象リソース（最大 10 件）�
 | Secret | `SLACK_WEBHOOK_URL` | Slack 通知用 Webhook URL |
 | Secret | `GH_PAT_NIGHTLY_REVIEW` | リポジトリ clone 用 Personal Access Token（`GITHUB_TOKEN` として注入） |
 | Variable | `WIF_PROVIDER` | Workload Identity Federation プロバイダ |
-| Variable | `CI_SERVICE_ACCOUNT` | GCP サービスアカウント |
+| Variable | `CI_SERVICE_ACCOUNT` | Google Cloud サービスアカウント |

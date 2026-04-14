@@ -22,7 +22,7 @@ GKE 関連チェック（Deployment, Ingress）は共有クラスタ `keyandnote
 
 ### environments.yaml
 
-監視対象の環境名と GCP プロジェクト ID のマッピングを定義する。
+監視対象の環境名と Google Cloud プロジェクト ID のマッピングを定義する。
 
 ```yaml
 dev: overload-party-dev
@@ -43,4 +43,4 @@ stg: overload-party-stg
 |---|---|---|
 | Secret | `SLACK_WEBHOOK_URL` | Slack 通知用 Webhook URL |
 | Variable | `WIF_PROVIDER` | Workload Identity Federation プロバイダ |
-| Variable | `CI_SERVICE_ACCOUNT` | GCP サービスアカウント |
+| Variable | `CI_SERVICE_ACCOUNT` | Google Cloud サービスアカウント |
