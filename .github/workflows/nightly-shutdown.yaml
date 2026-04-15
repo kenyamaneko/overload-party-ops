@@ -1,4 +1,4 @@
-name: Nightly Shutdown
+name: Nightly Shutdown Dispatcher
 
 # ADR「ノードプールスケーリング戦略とGKEの所有権」の所有権原則に基づき、
 # 実処理は各リソースの所有リポに集約。このワークフローはスケジューラとして

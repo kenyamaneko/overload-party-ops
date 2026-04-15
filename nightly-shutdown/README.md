@@ -13,7 +13,7 @@ ADR「ノードプールスケーリング戦略とGKEの所有権」の所有�
 |---|---|---|
 | GKE Ingress / DNS / PSC / 後続 node pool resize | `overload-party-k8s` | `env-lifecycle.yaml` (action=down) |
 | Cloud SQL activation policy | `overload-party-infra` | `cloudsql-activation.yaml` (action=down) |
-| GKE node pool resize | `keyandnotes-platform` | `node-pool-scale.yml` (env-lifecycle から連鎖) |
+| GKE node pool resize | `keyandnotes-platform` | `node-pool-scale.yaml` (env-lifecycle から連鎖) |
 
 ## スケジュール
 
