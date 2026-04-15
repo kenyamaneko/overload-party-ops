@@ -1,5 +1,12 @@
 name: Nightly Shutdown
 
+# ADR「ノードプールスケーリング戦略とGKEの所有権」の所有権原則に基づき、
+# 実処理は各リソースの所有リポに集約。このワークフローはスケジューラとして
+# それらを workflow_dispatch で呼び出すだけにとどめる。
+# - GKE / Ingress / DNS / PSC : overload-party-k8s/env-lifecycle.yaml (action=down)
+# - Cloud SQL                 : overload-party-infra/cloudsql-activation.yaml (action=down)
+# - Node pool resize          : env-lifecycle が platform リポに連鎖 dispatch する
+
 on:
   schedule:
     # 2:00 AM JST = 17:00 UTC
@@ -17,15 +24,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-
-env:
-  GKE_CLUSTER: keyandnotes-main
-  GKE_REGION: asia-northeast1
-  GKE_PROJECT: keyandnotes-platform
-
-# Cloud SQL instance name (same across dev/stg, different projects)
-# Project ID: overload-party-{env}
 
 jobs:
   shutdown:
@@ -35,39 +33,31 @@ jobs:
         env: ${{ github.event_name == 'schedule' && fromJson('["dev"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
-
-      - id: auth
-        uses: google-github-actions/auth@v2
+      # env-lifecycle の down が GKE / Ingress / DNS / PSC のクリーンアップと
+      # platform への node-pool-scale down dispatch までをまとめて担う。
+      - name: Dispatch env-lifecycle down
+        uses: benc-uk/workflow-dispatch@v1
         with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
+          workflow: env-lifecycle.yaml
+          repo: kenyamaneko/overload-party-k8s
+          ref: main
+          token: ${{ secrets.K8S_DISPATCH_TOKEN }}
+          inputs: '{"action": "down", "environment": "${{ matrix.env }}", "slack_notification": "true"}'
+          workflow-timeout-seconds: 1200
+          wait-for-completion: true
+          wait-for-completion-timeout: 20m
+          wait-for-completion-interval: 15s
 
-      - name: Setup GKE credentials
-        id: gke-auth
-        continue-on-error: true
-        uses: google-github-actions/get-gke-credentials@v2
+      # Cloud SQL は infra 所有。env-lifecycle 完了後に停止する。
+      - name: Dispatch Cloud SQL down
+        uses: benc-uk/workflow-dispatch@v1
         with:
-          cluster_name: ${{ env.GKE_CLUSTER }}
-          location: ${{ env.GKE_REGION }}
-          project_id: ${{ env.GKE_PROJECT }}
-
-      - name: Shutdown resources
-        id: shutdown
-        env:
-          ENV: ${{ matrix.env }}
-          CLOUDFLARE_DNS_API_TOKEN: ${{ secrets.CLOUDFLARE_DNS_API_TOKEN }}
-          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
-          CLOUDFLARE_DNS_RECORD_ID_DEV: ${{ vars.CLOUDFLARE_DNS_RECORD_ID_DEV }}
-          CLOUDFLARE_DNS_RECORD_ID_STG: ${{ vars.CLOUDFLARE_DNS_RECORD_ID_STG }}
-          GKE_AUTH_OK: ${{ steps.gke-auth.outcome == 'success' }}
-        run: bash nightly-shutdown/shutdown.sh
-
-      - name: Notify Slack
-        if: always()
-        env:
-          ENV: ${{ matrix.env }}
-          HAS_ERROR: ${{ steps.shutdown.outputs.has_error }}
-          RESULTS: ${{ steps.shutdown.outputs.results }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: bash nightly-shutdown/notify.sh
+          workflow: cloudsql-activation.yaml
+          repo: kenyamaneko/overload-party-infra
+          ref: main
+          token: ${{ secrets.INFRA_DISPATCH_TOKEN }}
+          inputs: '{"action": "down", "environment": "${{ matrix.env }}", "slack_notification": "true"}'
+          workflow-timeout-seconds: 600
+          wait-for-completion: true
+          wait-for-completion-timeout: 10m
+          wait-for-completion-interval: 10s

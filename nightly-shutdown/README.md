@@ -1,46 +1,39 @@
 # Nightly Shutdown
 
-dev 環境のリソースを毎晩自動停止し、コストを削減するワークフロー。
+dev 環境のリソースを毎晩自動停止し、コストを削減するスケジューラ。
 
-## 停止対象リソース
+## 実装方針
 
-実行順序（[ADR-018](../../overload-party-common/docs/adr/018-argocd-gitops-and-nodepool-based-shutdown.md) に準拠）:
+ADR「ノードプールスケーリング戦略とGKEの所有権」の所有権原則に従い、
+本ワークフローは **実処理を各リソース所有リポに委譲する薄いスケジューラ** として動作する。
 
-| # | リソース | 操作 |
+実処理の所在:
+
+| リソース | 担当リポ | ワークフロー |
 |---|---|---|
-| 1 | Ingress & BackendConfig | `kubectl delete` で削除 |
-| 2 | DNS (Cloudflare) | A レコードを `127.0.0.1` に変更 |
-| 3 | 予約済み外部 IP | LB cleanup 待機後、RESERVED 状態の IP を削除 |
-| 4 | PSC フォワーディングルール | `cloudsql-psc-{env}` を削除 |
-| 5 | GKE Nodepool | dev/stg 共有 nodepool `keyandnotes-main-dev` を 0 ノードに resize |
-| 6 | Cloud SQL | activation policy を `NEVER` に変更して停止 |
-
-Standard モードでは Pod を 0 レプリカにしても VM 課金は止まらないため、nodepool 自体を 0 ノードに resize する（ADR-018）。dev / stg は同一 nodepool を共有しているため、片方の shutdown で両方の Pod が停止する。
+| GKE Ingress / DNS / PSC / 後続 node pool resize | `overload-party-k8s` | `env-lifecycle.yaml` (action=down) |
+| Cloud SQL activation policy | `overload-party-infra` | `cloudsql-activation.yaml` (action=down) |
+| GKE node pool resize | `keyandnotes-platform` | `node-pool-scale.yml` (env-lifecycle から連鎖) |
 
 ## スケジュール
 
 - **定期実行**: 毎日 2:00 AM JST（dev 環境のみ）
 - **手動実行**: `workflow_dispatch` から dev / stg を選択して実行可能
 
-## Slack 通知
+## 起動 (morning wake-up) について
 
-実行結果を Slack に通知する。成功時・失敗時ともに通知され、失敗時はログへのリンクが含まれる。
+朝の自動起動スケジュールは設けない。起動が必要なときは人間が以下を手動ディスパッチする:
+
+- `overload-party-k8s/env-lifecycle.yaml` (action=up)
+- `overload-party-infra/cloudsql-activation.yaml` (action=up)
+
+Slack コマンド `/gke-up <env>` / `/sql-up <env>` 等を使えば 1 クリックで実行可能
+(実装状況は各リポ参照)。
 
 ## セットアップ
 
-### Secrets
+本ワークフローは **他リポへの workflow_dispatch** のみ行うため、
+以下の GitHub secrets が必要:
 
-| 名前 | 用途 |
-|---|---|
-| `SLACK_WEBHOOK_URL` | Slack 通知用 Webhook URL |
-| `CLOUDFLARE_DNS_API_TOKEN` | Cloudflare API トークン（DNS 編集権限） |
-
-### Variables
-
-| 名前 | 用途 |
-|---|---|
-| `WIF_PROVIDER` | Workload Identity Federation プロバイダ |
-| `CI_SERVICE_ACCOUNT` | CI 用サービスアカウント |
-| `CLOUDFLARE_ZONE_ID` | Cloudflare ゾーン ID |
-| `CLOUDFLARE_DNS_RECORD_ID_DEV` | dev 環境の DNS レコード ID |
-| `CLOUDFLARE_DNS_RECORD_ID_STG` | stg 環境の DNS レコード ID |
+- `K8S_DISPATCH_TOKEN`: `overload-party-k8s` に対する Actions: write 権限の fine-grained PAT
+- `INFRA_DISPATCH_TOKEN`: `overload-party-infra` に対する Actions: write 権限の fine-grained PAT
