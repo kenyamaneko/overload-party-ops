@@ -58,7 +58,7 @@ terraform apply    # Cloud Run Service, SA, Secret, IAM, dispatch-secret を作�
 **Slack Signing Secret** — Slack App > Basic Information > App Credentials からコピー:
 
 ```bash
-echo -n '<Signing Secret>' | gcloud secrets versions add slack-signing-secret --data-file=- --project=keyandnotes-ops
+echo -n '<Signing Secret>' | gcloud secrets versions add slack-signing-secret --data-file=- --project=overload-party-ops
 ```
 
 **DISPATCH_SECRET** — Worker ↔ Cloud Run 間の共有トークンを生成して登録:
@@ -67,7 +67,7 @@ echo -n '<Signing Secret>' | gcloud secrets versions add slack-signing-secret --
 openssl rand -base64 32
 # ↑ の出力をメモ（Cloudflare Worker にも同じ値を登録する）
 
-echo -n '<生成したトークン>' | gcloud secrets versions add slack-commands-dispatch-secret --data-file=- --project=keyandnotes-ops
+echo -n '<生成したトークン>' | gcloud secrets versions add slack-commands-dispatch-secret --data-file=- --project=overload-party-ops
 ```
 
 ### 5. GitHub Secrets / Variables 登録

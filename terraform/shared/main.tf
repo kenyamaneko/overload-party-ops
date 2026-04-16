@@ -12,7 +12,7 @@ provider "google" {
   region  = var.region
 }
 
-# --- APIs (keyandnotes-ops プロジェクト共通) ---
+# --- APIs (overload-party-ops プロジェクト共通) ---
 
 resource "google_project_service" "secretmanager" {
   service            = "secretmanager.googleapis.com"
@@ -21,11 +21,6 @@ resource "google_project_service" "secretmanager" {
 
 resource "google_project_service" "run" {
   service            = "run.googleapis.com"
-  disable_on_destroy = false
-}
-
-resource "google_project_service" "cloudscheduler" {
-  service            = "cloudscheduler.googleapis.com"
   disable_on_destroy = false
 }
 

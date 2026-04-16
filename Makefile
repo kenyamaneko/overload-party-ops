@@ -2,7 +2,7 @@ REGISTRY   := asia-northeast1-docker.pkg.dev
 AR_PROJECT := keyandnotes-platform
 AR_REPO    := overload-party
 REGION     := asia-northeast1
-PROJECT    ?= keyandnotes-ops
+PROJECT    ?= overload-party-ops
 
 IMAGE_BASE = $(REGISTRY)/$(AR_PROJECT)/$(AR_REPO)
 
