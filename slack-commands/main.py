@@ -4,7 +4,7 @@ from urllib.parse import parse_qs
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Response
 
-from routers import db_control, gke_control, open_issues, publish_gamedata_pkg
+from routers import db_control, gke_control, open_issues
 from adapters.worker_auth import verify_dispatch_request
 from adapters.slack_response import post_in_channel
 
@@ -20,7 +20,6 @@ COMMANDS: dict[str, CommandHandler] = {
     "/db-stop": db_control.handle_stop,
     "/gke-up": gke_control.handle_up,
     "/gke-down": gke_control.handle_down,
-    "/publish-gamedata-pkg": publish_gamedata_pkg.handle,
 }
 
 

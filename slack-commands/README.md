@@ -11,7 +11,6 @@ Slack スラッシュコマンドを処理する HTTP サービス。Cloudflare 
 | `/db-stop` | Cloud SQL インスタンスを停止 |
 | `/gke-up` | GKE 環境を起動（Ingress, Deployment 等） |
 | `/gke-down` | GKE 環境を停止 |
-| `/publish-gamedata-pkg` | ゲームデータパッケージの publish ワークフローをディスパッチ |
 
 ## アーキテクチャ
 
