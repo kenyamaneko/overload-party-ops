@@ -14,10 +14,11 @@ from pathlib import Path
 import yaml
 
 GITHUB_ORG = "kenyamaneko"
-MAX_DIFF_CHARS = 150000
-MAX_FILE_CONTENT_CHARS = 300000
-# Claude API のコンテキスト上限を踏まえた安全圏。超える場合はレビュー不能とする
-MAX_PROMPT_CHARS = 400000
+# 合計が MAX_PROMPT_CHARS を超えない値にすること（DIFF + FILE_CONTENT + ヘッダ < PROMPT）
+MAX_DIFF_CHARS = 300000
+MAX_FILE_CONTENT_CHARS = 700000
+# Claude CLI は 1M context を扱えるため、出力分の余白を残して 1.1M に設定
+MAX_PROMPT_CHARS = 1100000
 
 REPOS_YAML = Path(__file__).parent / "repos.yaml"
 
@@ -63,19 +64,19 @@ DIFF_PROMPT = (
 
 
 class GhError(Exception):
-    pass
+    """gh CLI の実行が失敗したことを示します。"""
 
 
 class PromptTooLargeError(Exception):
-    pass
+    """差分が大きすぎてプロンプト上限に収まらないことを示します。"""
 
 
 class ClaudeError(Exception):
-    pass
+    """Claude CLI の実行が失敗したことを示します。"""
 
 
 class IssueCreateError(Exception):
-    pass
+    """GitHub Issue の作成が失敗したことを示します。"""
 
 
 def _format_cmd_failure(stderr: str, stdout: str) -> str:
@@ -139,8 +140,12 @@ def issue_exists(repo: str, search_key: str) -> bool:
     return output.isdigit() and int(output) > 0
 
 
-def get_diff(repo: str, branch: str, since: str) -> tuple[str | None, list[str]]:
-    """指定日時以降の差分テキストと変更ファイル名リストを返します。"""
+def get_diff(repo: str, branch: str, since: str) -> tuple[str | None, list[dict]]:
+    """指定日時以降の差分テキストと変更ファイル情報リストを返します。
+
+    ファイル情報は {"filename": str, "status": str} の dict。
+    status は GitHub Compare API の値（added/modified/removed/renamed/copied/changed）。
+    """
     commits_json = gh(
         "api", f"repos/{GITHUB_ORG}/{repo}/commits?sha={branch}&since={since}",
         "-q", "length",
@@ -151,16 +156,16 @@ def get_diff(repo: str, branch: str, since: str) -> tuple[str | None, list[str]]
 
     compare_endpoint = f"repos/{GITHUB_ORG}/{repo}/compare/{branch}~{commit_count}...{branch}"
 
-    # ファイル名と差分を 1 回の API コールで取得
+    # ファイル名・status・差分を 1 回の API コールで取得
     combined = gh(
         "api", compare_endpoint,
-        "--jq", '.files[] | select(.patch != null) | {filename, patch}',
+        "--jq", '.files[] | select(.patch != null) | {filename, status, patch}',
     )
 
     if not combined:
         return None, []
 
-    filenames: list[str] = []
+    files: list[dict] = []
     diff_parts: list[str] = []
     for line in combined.split("\n"):
         line = line.strip()
@@ -168,33 +173,48 @@ def get_diff(repo: str, branch: str, since: str) -> tuple[str | None, list[str]]
             continue
         try:
             obj = json.loads(line)
-            filenames.append(obj["filename"])
+            files.append({"filename": obj["filename"], "status": obj["status"]})
             diff_parts.append(f"=== {obj['filename']} ===\n{obj['patch']}")
         except (json.JSONDecodeError, KeyError):
             continue
 
     raw = "\n".join(diff_parts)
-    return (raw if raw else None), filenames
+    return (raw if raw else None), files
 
 
-def get_file_contents(repo: str, branch: str, filenames: list[str], limit: int) -> str:
-    """変更ファイルの全文を GitHub API 経由で取得し、制限内で結合して返します。"""
+class FileContentFetchError(Exception):
+    """変更ファイル全文の取得中に想定外のエラーが発生したことを示します。"""
+
+
+def get_file_contents(
+    repo: str, branch: str, files: list[dict], limit: int,
+) -> str:
+    """変更ファイルの全文を GitHub API 経由で取得し、制限内で結合して返します。
+
+    status=removed のファイルは branch HEAD に存在しないため取得対象から除外する。
+    それ以外のファイルで取得または decode に失敗した場合は握りつぶさず例外を投げ、
+    呼び出し側で Slack 通知に回す。
+    """
     sections: list[str] = []
     total = 0
 
-    for filename in filenames:
+    for f in files:
+        filename = f["filename"]
+        if f["status"] == "removed":
+            continue
+
         try:
             content = gh(
                 "api", f"repos/{GITHUB_ORG}/{repo}/contents/{filename}?ref={branch}",
                 "--jq", ".content",
             )
-        except GhError:
-            continue
+        except GhError as e:
+            raise FileContentFetchError(f"{filename}: GitHub API 失敗 ({e})") from e
 
         try:
             decoded = base64.b64decode(content).decode("utf-8", errors="replace")
-        except Exception:
-            continue
+        except Exception as e:
+            raise FileContentFetchError(f"{filename}: base64 decode 失敗 ({e})") from e
 
         section = f"=== {filename} (full) ===\n{decoded}"
         if total + len(section) > limit and sections:
@@ -255,7 +275,7 @@ def truncate_diff(diff: str, limit: int) -> tuple[str, list[str]]:
 def review_diff(repo: str, branch: str, yesterday: str) -> str | None:
     """指定リポジトリの前日差分を Claude でレビューします。"""
     since = f"{yesterday}T00:00:00Z"
-    diff, filenames = get_diff(repo, branch, since)
+    diff, files = get_diff(repo, branch, since)
     if diff is None:
         print(f"  No changes since {yesterday}, skipping.")
         return None
@@ -264,13 +284,13 @@ def review_diff(repo: str, branch: str, yesterday: str) -> str | None:
 
     note = ""
     if omitted:
-        files = ", ".join(omitted)
-        note = f"（注：差分が大きいため以下のファイルは省略されています: {files}）\n"
+        omitted_names = ", ".join(omitted)
+        note = f"（注：差分が大きいため以下のファイルは省略されています: {omitted_names}）\n"
 
     file_context = ""
-    if filenames:
-        print(f"  Fetching full content for {len(filenames)} changed files...")
-        file_context = get_file_contents(repo, branch, filenames, MAX_FILE_CONTENT_CHARS)
+    if files:
+        print(f"  Fetching full content for {len(files)} changed files...")
+        file_context = get_file_contents(repo, branch, files, MAX_FILE_CONTENT_CHARS)
         if file_context:
             file_context = (
                 "\n\n以下は変更されたファイルの全文です。\n\n"
@@ -281,7 +301,7 @@ def review_diff(repo: str, branch: str, yesterday: str) -> str | None:
     if len(prompt) > MAX_PROMPT_CHARS:
         raise PromptTooLargeError(
             f"プロンプト {len(prompt):,} chars "
-            f"(diff={len(diff):,} chars, files={len(filenames)}) "
+            f"(diff={len(diff):,} chars, files={len(files)}) "
             f"が上限 {MAX_PROMPT_CHARS:,} を超過"
         )
     return run_claude(prompt)
@@ -367,6 +387,15 @@ def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, l
         # stderr/stdout 詳細は print で Actions ログに流す。Slack は短く
         print(f"  Error: {e}")
         notify_slack(f"Nightly Review エラー: {repo}", "Claude CLI 失敗 (詳細はログ)")
+        return True
+    except FileContentFetchError as e:
+        # レビュー対象ファイルの一部が欠けるとレビュー品質が無言で劣化するため、
+        # 取得失敗は握りつぶさずに Slack に必ず流して人間に判断を委ねる。
+        print(f"  Error: {e}")
+        notify_slack(
+            f"Nightly Review エラー: {repo}",
+            f"変更ファイルの全文取得に失敗しました\n{e}",
+        )
         return True
     except GhError as e:
         print(f"  Error: {e}")
