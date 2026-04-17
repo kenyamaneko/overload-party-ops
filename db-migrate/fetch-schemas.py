@@ -114,7 +114,6 @@ def build_union(lock: dict, workdir: Path, token: str | None, ref_override: str 
         print(f"==> fetching {name}: {repo}@{ref}:{path}", flush=True)
         dest = workdir / name
         if dest.exists():
-            # 同一 Job 内で再実行された場合のクリーンアップ
             _run(["rm", "-rf", str(dest)])
         sql_path = _clone_sparse(repo, ref, path, dest, token)
         sql = sql_path.read_text(encoding="utf-8")

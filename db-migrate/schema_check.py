@@ -33,7 +33,7 @@ def parse_schema(sql: str) -> dict[str, set[str]]:
     tables: dict[str, set[str]] = {}
     for match in TABLE_RE.finditer(sql):
         qualified = match.group(1).lower()
-        # unqualified をキーにすることで旧 public スキーマ時代のダンプとも比較可能にする
+        # schema 修飾の有無を吸収するため unqualified 名をキーにする
         table_name = qualified.split(".", 1)[1] if "." in qualified else qualified
         body = match.group(2)
         tables[table_name] = _extract_columns(body)

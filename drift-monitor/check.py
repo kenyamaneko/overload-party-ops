@@ -18,12 +18,9 @@ CLONE_BASE = "/tmp/drift-monitor"
 
 def load_targets() -> list[dict]:
     """監視対象の Terraform 環境一覧を読み込みます。"""
-    raw = os.environ.get("TARGETS_JSON", "")
-    if raw:
-        return json.loads(raw)
-    if TARGETS_YAML.exists():
-        return yaml.safe_load(TARGETS_YAML.read_text())
-    return []
+    if not TARGETS_YAML.exists():
+        raise FileNotFoundError(f"targets file not found: {TARGETS_YAML}")
+    return yaml.safe_load(TARGETS_YAML.read_text())
 
 
 def run(args: list[str], cwd: str | None = None, timeout: int = 600) -> subprocess.CompletedProcess:
@@ -84,8 +81,18 @@ def _strip_init_noise(output: str) -> str:
     return "\n".join(lines)
 
 
+class PlanParseError(Exception):
+    """terraform plan 出力から Plan: 行や変更対象リソースを抽出できなかったことを示す。"""
+
+
 def extract_summary(plan_output: str) -> str:
-    """plan 出力から Plan: 行と変更対象リソースを抽出します。"""
+    """plan 出力から Plan: 行と変更対象リソースを抽出します。
+
+    drift 検出時 (exit code 2) の出力は必ず Plan: 行か `# ... will be ...` 行を含む。
+    どちらも見つからない場合はパース失敗または terraform 出力フォーマットの変更を
+    意味するため、silent に末尾を返さず PlanParseError を投げて呼び出し側のエラー
+    扱いに回す。
+    """
     resources: list[str] = []
     summary_line = ""
 
@@ -104,11 +111,9 @@ def extract_summary(plan_output: str) -> str:
         if len(resources) > 10:
             parts.append(f"  ...他 {len(resources) - 10} リソース")
 
-    if parts:
-        return "\n".join(parts)
-
-    last_lines = plan_output.strip().splitlines()[-5:]
-    return "\n".join(last_lines)
+    if not parts:
+        raise PlanParseError("Plan: 行も変更対象リソースも検出できませんでした")
+    return "\n".join(parts)
 
 
 SLACK_TEXT_LIMIT = 3900
@@ -147,9 +152,6 @@ def main() -> None:
         sys.exit(1)
 
     targets = load_targets()
-    if not targets:
-        print("Error: targets not found (targets.yaml or TARGETS_JSON)", file=sys.stderr)
-        sys.exit(1)
 
     os.makedirs(CLONE_BASE, exist_ok=True)
 
@@ -181,7 +183,14 @@ def main() -> None:
             if exit_code == 0:
                 print("no drift")
             elif exit_code == 2:
-                summary = extract_summary(output)
+                try:
+                    summary = extract_summary(output)
+                except PlanParseError as e:
+                    # パース失敗を fallback で隠すと「drift あり、内容不明」のミスリード
+                    # 通知になるためエラー扱いにして人間の調査を促す
+                    print(f"DRIFT DETECTED but parse failed: {e}")
+                    errors.append({"repo": repo, "env": env_name, "detail": f"plan 出力のパース失敗: {e}"})
+                    continue
                 print(f"DRIFT DETECTED:\n{summary}")
                 drifts.append({"label": label, "summary": summary})
             else:

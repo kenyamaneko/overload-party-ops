@@ -38,7 +38,6 @@ export async function verifySlackRequest(
 
   const expected = `v0=${hexEncode(mac)}`;
 
-  // timing-safe comparison
   if (expected.length !== signature.length) return false;
 
   const a = new TextEncoder().encode(expected);

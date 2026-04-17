@@ -2,7 +2,6 @@
 .claude/
 .gemini/
 .aider*
-CLAUDE.md
 
 # Python
 __pycache__/

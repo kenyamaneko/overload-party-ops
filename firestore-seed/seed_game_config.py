@@ -1,7 +1,6 @@
 """Firestore game_config シード投入スクリプト。
 
-旧 `overload-party-common/db/seed/game_config.sql` と同等の初期値を
-Firestore Native モードの `game_config` コレクションに投入する。
+Firestore Native モードの `game_config` コレクションにゲーム設定の初期値を投入する。
 
 使い方:
     # 本番/ステージング/dev の Google Cloud プロジェクト指定
@@ -24,7 +23,6 @@ from google.cloud import firestore
 
 COLLECTION = "game_config"
 
-# 値は全て int64 相当の整数で投入する (旧 JSONB 相当)。
 DEFAULT_VALUES: dict[str, int] = {
     "free_daily_battle_limit": 10,
     "premium_daily_battle_limit": 30,

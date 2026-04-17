@@ -55,20 +55,23 @@ jobs:
           password: ${{ steps.auth.outputs.access_token }}
 
       - name: Build and push image
-        run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ inputs.image_name }}
-          docker build \
-            -t ${IMAGE}:${{ github.sha }} \
-            -t ${IMAGE}:latest \
-            ${{ inputs.service_dir }}/
-          docker push ${IMAGE}:${{ github.sha }}
-          docker push ${IMAGE}:latest
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          AR_PROJECT: ${{ env.AR_PROJECT }}
+          AR_REPOSITORY: ${{ env.AR_REPOSITORY }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          SERVICE_DIR: ${{ inputs.service_dir }}
+          GIT_SHA: ${{ github.sha }}
+        run: .github/scripts/build-deploy-service/build-push-image.sh
 
       - name: Update Cloud Run Service
-        run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.AR_PROJECT }}/${{ env.AR_REPOSITORY }}/${{ inputs.image_name }}:${{ github.sha }}
-          gcloud run services update "${{ inputs.cloud_run_service }}" \
-            --region ${{ env.REGION }} \
-            --project ${{ env.PROJECT }} \
-            --image "${IMAGE}" \
-            --quiet
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          AR_PROJECT: ${{ env.AR_PROJECT }}
+          AR_REPOSITORY: ${{ env.AR_REPOSITORY }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          GIT_SHA: ${{ github.sha }}
+          CLOUD_RUN_SERVICE: ${{ inputs.cloud_run_service }}
+          REGION: ${{ env.REGION }}
+          PROJECT: ${{ env.PROJECT }}
+        run: .github/scripts/build-deploy-service/update-cloud-run.sh

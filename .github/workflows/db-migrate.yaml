@@ -49,25 +49,20 @@ jobs:
       ENV: ${{ github.event_name == 'repository_dispatch' && 'dev' || inputs.environment }}
 
     steps:
-      - name: Resolve parameters
-        id: params
-        run: |
-          echo "project=$(echo '${{ env.PROJECTS }}' | jq -r '.\"${{ env.ENV }}\"')" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            # repository_dispatch 側 (service repo 側) が client_payload.sha を送ってきても、
-            # それは送信元 repo の SHA であって ops repo の SHA ではないので使わない。
-            # ops 側は常に main (= schemas.lock.yaml の HEAD) を採用する。
-            echo "image_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-            echo "dry_run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "image_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-            echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Checkout ops repo (fetch-depth=2 for HEAD~1 safety diff)
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
+
+      - name: Resolve parameters
+        id: params
+        env:
+          PROJECTS: ${{ env.PROJECTS }}
+          TARGET_ENV: ${{ env.ENV }}
+          EVENT_NAME: ${{ github.event_name }}
+          GIT_SHA: ${{ github.sha }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: .github/scripts/db-migrate/resolve-params.sh
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -90,19 +85,7 @@ jobs:
       - name: Build previous schema union (for safety diff)
         env:
           DB_MIGRATE_TOKEN: ${{ secrets.DB_MIGRATE_TOKEN }}
-        run: |
-          # HEAD~1 の schemas.lock.yaml を取り出し、その時点の union を作って
-          # 破壊的変更を検出する。ops repo に前コミットがない場合 (初回) はスキップ。
-          if git rev-parse HEAD~1 >/dev/null 2>&1; then
-            git show HEAD~1:db-migrate/schemas.lock.yaml > /tmp/schemas.lock.old.yaml
-            python3 db-migrate/fetch-schemas.py \
-              --lock /tmp/schemas.lock.old.yaml \
-              --out /tmp/schema_union.old.sql \
-              --grant-src db-migrate/grant_iam.sql \
-              --workdir /tmp/schema-src-old
-          else
-            echo "" > /tmp/schema_union.old.sql
-          fi
+        run: .github/scripts/db-migrate/build-previous-schema-union.sh
 
       - name: Schema safety check
         run: |

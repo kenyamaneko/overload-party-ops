@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64
+"""全リポジトリの前日差分を Claude でレビューし、GitHub Issue と Slack 通知を作成する。"""
 import json
 import os
 import re
@@ -13,7 +13,18 @@ from pathlib import Path
 
 import yaml
 
-GITHUB_ORG = "kenyamaneko"
+from gh_client import (
+    FileContentFetchError,
+    GhError,
+    IssueCreateError,
+    _format_cmd_failure,
+    create_issue,
+    ensure_label,
+    get_diff,
+    get_file_contents,
+    issue_exists,
+)
+
 # 合計が MAX_PROMPT_CHARS を超えない値にすること（DIFF + FILE_CONTENT + ヘッダ < PROMPT）
 MAX_DIFF_CHARS = 300000
 MAX_FILE_CONTENT_CHARS = 700000
@@ -63,166 +74,12 @@ DIFF_PROMPT = (
 )
 
 
-class GhError(Exception):
-    """gh CLI の実行が失敗したことを示します。"""
-
-
 class PromptTooLargeError(Exception):
     """差分が大きすぎてプロンプト上限に収まらないことを示します。"""
 
 
 class ClaudeError(Exception):
     """Claude CLI の実行が失敗したことを示します。"""
-
-
-class IssueCreateError(Exception):
-    """GitHub Issue の作成が失敗したことを示します。"""
-
-
-def _format_cmd_failure(stderr: str, stdout: str) -> str:
-    """外部コマンド失敗時の詳細メッセージを整形します。CLI によっては stdout にしかエラーを吐かないため両方拾う。"""
-    stderr_s = (stderr or "").strip()
-    stdout_s = (stdout or "").strip()
-    if stderr_s and stdout_s:
-        return f"stderr: {stderr_s}\nstdout: {stdout_s}"
-    if stderr_s:
-        return f"stderr: {stderr_s}"
-    if stdout_s:
-        return f"stdout: {stdout_s}"
-    return "(stderr/stdout ともに空)"
-
-
-def gh(*args: str) -> str:
-    """gh CLI コマンドを実行します。"""
-    result = subprocess.run(
-        ["gh", *args],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        msg = f"gh {args[0]} failed: {result.stderr.strip()}"
-        print(f"  Error: {msg}")
-        raise GhError(msg)
-    return result.stdout.strip()
-
-
-def ensure_label(repo: str, label: str) -> None:
-    """GitHub リポジトリにラベルが存在しなければ作成します。"""
-    try:
-        existing = gh("label", "list", "--repo", f"{GITHUB_ORG}/{repo}", "--search", label)
-    except GhError as e:
-        print(f"  Warning: failed to list labels for {repo}: {e}")
-        existing = ""
-    if label not in existing:
-        result = subprocess.run(
-            ["gh", "label", "create", label,
-             "--repo", f"{GITHUB_ORG}/{repo}",
-             "--color", "0e8a16",
-             "--description", "Nightly auto-review"],
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            print(f"  Warning: failed to create label '{label}': {result.stderr.strip()}")
-
-
-def issue_exists(repo: str, search_key: str) -> bool:
-    """同名の Issue が既に存在するか確認します。"""
-    try:
-        output = gh(
-            "issue", "list",
-            "--repo", f"{GITHUB_ORG}/{repo}",
-            "--search", f'in:title "{search_key}"',
-            "--state", "open",
-            "--json", "number",
-            "--jq", "length",
-        )
-    except GhError:
-        return False
-    return output.isdigit() and int(output) > 0
-
-
-def get_diff(repo: str, branch: str, since: str) -> tuple[str | None, list[dict]]:
-    """指定日時以降の差分テキストと変更ファイル情報リストを返します。
-
-    ファイル情報は {"filename": str, "status": str} の dict。
-    status は GitHub Compare API の値（added/modified/removed/renamed/copied/changed）。
-    """
-    commits_json = gh(
-        "api", f"repos/{GITHUB_ORG}/{repo}/commits?sha={branch}&since={since}",
-        "-q", "length",
-    )
-    commit_count = int(commits_json) if commits_json.isdigit() else 0
-    if commit_count == 0:
-        return None, []
-
-    compare_endpoint = f"repos/{GITHUB_ORG}/{repo}/compare/{branch}~{commit_count}...{branch}"
-
-    # ファイル名・status・差分を 1 回の API コールで取得
-    combined = gh(
-        "api", compare_endpoint,
-        "--jq", '.files[] | select(.patch != null) | {filename, status, patch}',
-    )
-
-    if not combined:
-        return None, []
-
-    files: list[dict] = []
-    diff_parts: list[str] = []
-    for line in combined.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            files.append({"filename": obj["filename"], "status": obj["status"]})
-            diff_parts.append(f"=== {obj['filename']} ===\n{obj['patch']}")
-        except (json.JSONDecodeError, KeyError):
-            continue
-
-    raw = "\n".join(diff_parts)
-    return (raw if raw else None), files
-
-
-class FileContentFetchError(Exception):
-    """変更ファイル全文の取得中に想定外のエラーが発生したことを示します。"""
-
-
-def get_file_contents(
-    repo: str, branch: str, files: list[dict], limit: int,
-) -> str:
-    """変更ファイルの全文を GitHub API 経由で取得し、制限内で結合して返します。
-
-    status=removed のファイルは branch HEAD に存在しないため取得対象から除外する。
-    それ以外のファイルで取得または decode に失敗した場合は握りつぶさず例外を投げ、
-    呼び出し側で Slack 通知に回す。
-    """
-    sections: list[str] = []
-    total = 0
-
-    for f in files:
-        filename = f["filename"]
-        if f["status"] == "removed":
-            continue
-
-        try:
-            content = gh(
-                "api", f"repos/{GITHUB_ORG}/{repo}/contents/{filename}?ref={branch}",
-                "--jq", ".content",
-            )
-        except GhError as e:
-            raise FileContentFetchError(f"{filename}: GitHub API 失敗 ({e})") from e
-
-        try:
-            decoded = base64.b64decode(content).decode("utf-8", errors="replace")
-        except Exception as e:
-            raise FileContentFetchError(f"{filename}: base64 decode 失敗 ({e})") from e
-
-        section = f"=== {filename} (full) ===\n{decoded}"
-        if total + len(section) > limit and sections:
-            break
-        sections.append(section)
-        total += len(section)
-
-    return "\n".join(sections)
 
 
 def run_claude(prompt: str) -> str | None:
@@ -263,8 +120,10 @@ def truncate_diff(diff: str, limit: int) -> tuple[str, list[str]]:
         if not section:
             continue
         if total + len(section) > limit and kept:
+            # split が === xxx === の lookahead で分割しているため、
+            # ここに来る非空セクションは必ず === xxx === で始まる
             m = re.match(r"^=== (.+) ===$", section, re.MULTILINE)
-            omitted.append(m.group(1) if m else "(unknown)")
+            omitted.append(m.group(1))
         else:
             kept.append(section)
             total += len(section)
@@ -307,26 +166,32 @@ def review_diff(repo: str, branch: str, yesterday: str) -> str | None:
     return run_claude(prompt)
 
 
-def create_issue(repo: str, title: str, label: str, body: str) -> str:
-    """GitHub Issue を作成し、URL を返します。"""
-    result = subprocess.run(
-        ["gh", "issue", "create",
-         "--repo", f"{GITHUB_ORG}/{repo}",
-         "--title", title,
-         "--label", label,
-         "--body", body],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        raise IssueCreateError(_format_cmd_failure(result.stderr, result.stdout))
-    issue_url = result.stdout.strip()
-    print(f"  Created: {issue_url}")
-    return issue_url
-
-
 def is_no_issues(body: str) -> bool:
     """レビュー結果が LGTM（指摘なし）かどうかを判定します。"""
     return body.strip() == "LGTM"
+
+
+def _actions_run_url() -> str:
+    """GitHub Actions 実行中なら当該 run の URL を返します。ローカル実行時は空文字。"""
+    server = os.environ.get("GITHUB_SERVER_URL", "").rstrip("/")
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    if server and repo and run_id:
+        return f"{server}/{repo}/actions/runs/{run_id}"
+    return ""
+
+
+def _log_reference() -> str:
+    """Slack 本文に埋め込む「ログ所在」のテキスト。
+
+    Actions URL が取れる時はリンク、取れない時は「取得不可」理由を明示する。
+    「詳細はログ」とだけ書いてユーザーが実際の所在を探せない状態を作らないため、
+    silent に URL を省略せず、どちらのケースも明示的に表現する。
+    """
+    run_url = _actions_run_url()
+    if run_url:
+        return f"<{run_url}|Actions ログ>"
+    return "ログ URL 取得不可 (GitHub Actions 外の実行 — stdout を確認)"
 
 
 def notify_slack(title: str, body: str) -> None:
@@ -386,7 +251,7 @@ def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, l
     except ClaudeError as e:
         # stderr/stdout 詳細は print で Actions ログに流す。Slack は短く
         print(f"  Error: {e}")
-        notify_slack(f"Nightly Review エラー: {repo}", "Claude CLI 失敗 (詳細はログ)")
+        notify_slack(f"Nightly Review エラー: {repo}", f"Claude CLI 失敗 (詳細: {_log_reference()})")
         return True
     except FileContentFetchError as e:
         # レビュー対象ファイルの一部が欠けるとレビュー品質が無言で劣化するため、
@@ -399,7 +264,7 @@ def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, l
         return True
     except GhError as e:
         print(f"  Error: {e}")
-        notify_slack(f"Nightly Review エラー: {repo}", "GitHub API 失敗 (詳細はログ)")
+        notify_slack(f"Nightly Review エラー: {repo}", f"GitHub API 失敗 (詳細: {_log_reference()})")
         return True
 
     if body is None:
@@ -413,7 +278,7 @@ def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, l
         issue_url = create_issue(repo, title, label, body)
     except IssueCreateError as e:
         print(f"  Error: {e}")
-        notify_slack(f"Nightly Review エラー: {repo}", "Issue 作成失敗 (詳細はログ)")
+        notify_slack(f"Nightly Review エラー: {repo}", f"Issue 作成失敗 (詳細: {_log_reference()})")
         return True
 
     notify_slack(title, f"レビューコメントがあります\n{issue_url}")
@@ -445,7 +310,7 @@ def main() -> None:
                 exc_line = tb.strip().splitlines()[-1] if tb.strip() else "(unknown)"
                 notify_slack(
                     f"Nightly Review 想定外エラー: {repo}",
-                    f"{exc_line} (詳細はログ)",
+                    f"{exc_line}\n詳細: {_log_reference()}",
                 )
                 has_error = True
     except Exception:
@@ -453,7 +318,7 @@ def main() -> None:
         tb = traceback.format_exc()
         print(tb)
         exc_line = tb.strip().splitlines()[-1] if tb.strip() else "(unknown)"
-        notify_slack("Nightly Review 想定外エラー", f"{exc_line} (詳細はログ)")
+        notify_slack("Nightly Review 想定外エラー", f"{exc_line}\n詳細: {_log_reference()}")
         sys.exit(1)
 
     print("=== Nightly review complete ===")
