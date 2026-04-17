@@ -29,32 +29,30 @@ Cloud Run (slack-commands)
 Slack（結果表示）
 ```
 
-## なぜ TypeScript なのか
-
-他のジョブ・サービスは Python で統一しているが、Cloudflare Workers のランタイムは JavaScript/TypeScript のみをサポートしているため、この Worker だけ TypeScript で実装している。
-
 ## デプロイ
 
 `slack-commands-worker/` 配下を main に push すると GitHub Actions が自動デプロイする。
 
 ## 設定
 
-### wrangler.toml
+`wrangler.toml`:
 
-| 変数 | 説明 |
-|------|------|
+| 変数 | 用途 |
+|---|---|
 | `CLOUD_RUN_URL` | 転送先の Cloud Run Service URL |
 
-### Secrets（`wrangler secret put` で登録）
+## 必要なシークレット / 変数
 
-| 名前 | 説明 |
-|------|------|
+Cloudflare Worker secrets（`wrangler secret put` で登録）:
+
+| 名前 | 用途 |
+|---|---|
 | `SLACK_SIGNING_SECRET` | Slack App の Signing Secret |
 | `DISPATCH_SECRET` | Cloud Run との共有認証トークン |
 
-### GitHub Secrets / Variables
+ops リポジトリの Settings > Secrets and variables > Actions:
 
-| 種別 | 名前 | 説明 |
-|------|------|------|
+| 種別 | 名前 | 用途 |
+|---|---|---|
 | Secret | `CLOUDFLARE_WORKERS_API_TOKEN` | Cloudflare API トークン（Workers Scripts / Edit） |
 | Variable | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID |

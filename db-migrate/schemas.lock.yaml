@@ -1,7 +1,7 @@
 # db-migrate schema source lock
 #
 # 各サービスリポの DDL を union して Cloud SQL に適用するためのソース一覧。
-# このファイルは `fetch-schemas.sh` が参照し、列挙順でそのまま concat するため、
+# このファイルは `fetch-schemas.py` が参照し、列挙順でそのまま concat するため、
 # 依存順を壊さないこと。各サービススキーマは自前の update_updated_at() を定義するため
 # 他スキーマへの依存は無い。app-level FK (gateway.game_players → battle.games) のみ
 # gateway を battle の後に配置する。
@@ -11,7 +11,7 @@
 #
 # 追加・削除手順:
 #   1. このファイルに entry を足す (依存順を考慮)
-#   2. PR を作成し、CI で `fetch-schemas.sh` が union をビルドできることを確認
+#   2. PR を作成し、CI で `fetch-schemas.py` が union をビルドできることを確認
 #   3. main merge 後の自動 db-migrate (dev) で psqldef が差分を適用する
 #   4. stg / prod は手動 workflow_dispatch で環境ごとに実行
 

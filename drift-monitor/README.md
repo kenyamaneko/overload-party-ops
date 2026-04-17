@@ -11,9 +11,7 @@
 
 plan 出力からは `Plan:` 行と変更対象リソース（最大 10 件）を抽出してサマリとする。
 
-## スケジュール
-
-毎日 7:00 AM JST（cron: `0 22 * * *` UTC）。手動実行（`workflow_dispatch`）も可能。
+手動実行（`workflow_dispatch`）も可能。
 
 ## 設定
 
@@ -46,8 +44,6 @@ plan 出力からは `Plan:` 行と変更対象リソース（最大 10 件）�
     - name: shared
       path: terraform/shared
 ```
-
-`TARGETS_JSON` 環境変数が設定されている場合はそちらが優先される。
 
 ## Slack 通知
 

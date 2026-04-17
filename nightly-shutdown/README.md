@@ -15,25 +15,22 @@ ADR「ノードプールスケーリング戦略とGKEの所有権」の所有�
 | Cloud SQL activation policy | `overload-party-infra` | `cloudsql-activation.yaml` (action=down) |
 | GKE node pool resize | `keyandnotes-platform` | `node-pool-scale.yaml` (env-lifecycle から連鎖) |
 
-## スケジュール
-
-- **定期実行**: 毎日 2:00 AM JST（dev 環境のみ）
-- **手動実行**: `workflow_dispatch` から dev / stg を選択して実行可能
+定期実行に加え、`workflow_dispatch` から dev / stg を選択して手動実行も可能。
 
 ## 起動 (morning wake-up) について
 
-朝の自動起動スケジュールは設けない。起動が必要なときは人間が以下を手動ディスパッチする:
+朝の自動起動スケジュールは設けない。起動が必要なときは以下を手動ディスパッチする:
 
 - `overload-party-k8s/env-lifecycle.yaml` (action=up)
 - `overload-party-infra/cloudsql-activation.yaml` (action=up)
 
-Slack コマンド `/gke-up <env>` / `/sql-up <env>` 等を使えば 1 クリックで実行可能
-(実装状況は各リポ参照)。
+Slack コマンド `/gke-up <env>` / `/db-start <env>` でも実行可能。
 
-## セットアップ
+## 必要なシークレット / 変数
 
-本ワークフローは **他リポへの workflow_dispatch** のみ行うため、
-以下の GitHub secrets が必要:
+本ワークフローは他リポへの `workflow_dispatch` のみ行う:
 
-- `K8S_DISPATCH_TOKEN`: `overload-party-k8s` に対する Actions: write 権限の fine-grained PAT
-- `INFRA_DISPATCH_TOKEN`: `overload-party-infra` に対する Actions: write 権限の fine-grained PAT
+| 種別 | 名前 | 用途 |
+|---|---|---|
+| Secret | `K8S_DISPATCH_TOKEN` | `overload-party-k8s` に対する Actions: write 権限の fine-grained PAT |
+| Secret | `INFRA_DISPATCH_TOKEN` | `overload-party-infra` に対する Actions: write 権限の fine-grained PAT |

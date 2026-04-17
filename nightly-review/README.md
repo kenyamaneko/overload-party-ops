@@ -1,12 +1,8 @@
 # Nightly Review
 
-Claude Code を使った夜間自動レビューシステム。GitHub Actions schedule で毎晩 3:00 (JST) に各リポジトリをレビューし、結果を GitHub Issues に起票する。
+Claude Code を使った夜間自動レビューシステム。各リポジトリの前日との差分をレビューし、結果を GitHub Issues に起票する。
 
-## スケジュール
-
-毎晩 3:00 (JST) に各リポジトリの前日との差分をレビューする。
-
-## 対象リポジトリの設定
+## 設定
 
 `repos.yaml` でリポジトリ名と対象ブランチを管理する。
 
@@ -20,15 +16,15 @@ Claude Code を使った夜間自動レビューシステム。GitHub Actions sc
 - `branch` は必須。未設定のリポジトリはスキップされ、Slack にエラー通知される
 - `REPOS_JSON` 環境変数で同形式の JSON を渡すとオーバーライド可能
 
-## セットアップ
+## 必要なシークレット / 変数
 
 ops リポジトリの Settings > Secrets and variables > Actions:
 
-| 種別 | 名前 | 値 |
-|------|------|-----|
+| 種別 | 名前 | 用途 |
+|---|---|---|
 | Secret | `ANTHROPIC_API_KEY` | Anthropic API キー |
-| Secret | `GH_PAT_NIGHTLY_REVIEW` | 他リポの Issue を作成するための Fine-grained PAT |
-| Secret | `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL |
+| Secret | `GH_PAT_NIGHTLY_REVIEW` | 他リポの Issue を作成するための fine-grained PAT |
+| Secret | `SLACK_WEBHOOK_URL` | Slack 通知用 Webhook URL |
 
 ## Slack 通知
 

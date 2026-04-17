@@ -14,9 +14,7 @@ dev/stg 環境でコストが発生しているリソースを検出し、Slack 
 
 GKE 関連チェック（Deployment, Ingress）は共有クラスタ `keyandnotes-main`（`keyandnotes-platform` プロジェクト）に対して実行する。namespace が存在しない環境はスキップされる。
 
-## スケジュール
-
-毎日 8:00 AM JST（cron: `0 23 * * *` UTC）。手動実行（`workflow_dispatch`）も可能。
+手動実行（`workflow_dispatch`）も可能。
 
 ## 設定
 

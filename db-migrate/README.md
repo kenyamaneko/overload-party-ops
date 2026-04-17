@@ -14,7 +14,7 @@ DB スキーマはサービスごとに分割されている。DDL の所在:
 | `shop` | overload-party-shop | `db/schema.sql` |
 | `scenario` | overload-party-scenario | `db/schema.sql` |
 | `gateway` | overload-party-gateway | `db/schema.sql` |
-| `newsfeed` | overload-party-newsfeed | `schema.sql` (repo root 配置) |
+| `newsfeed` | overload-party-newsfeed | `db/schema.sql` |
 
 matchmaking は DB を持たない (Redis + Pub/Sub のみ)。ゲーム動的設定値 (`game_config`) は Cloud Firestore で別管理。
 
@@ -91,34 +91,21 @@ GitHub Actions UI から手動実行。
 
 `dry_run=true` で実行すると Docker イメージのビルド・プッシュと Cloud Run Job のイメージ更新までは行うが、**ジョブ実行はスキップ**される。
 
-## セットアップ
+## 必要なシークレット / 変数
 
-### GitHub Secrets
+ops リポジトリの Settings > Secrets and variables > Actions:
 
-ops リポジトリの Settings > Secrets and variables > Actions > Secrets:
+| 種別 | 名前 | 用途 |
+|---|---|---|
+| Secret | `DB_MIGRATE_TOKEN` | 全 service repo に read 権限のある PAT（fine-grained 推奨、対象: account / battle / card / shop / scenario / gateway / newsfeed） |
 
-| 名前 | 値 |
-|------|-----|
-| `DB_MIGRATE_TOKEN` | 全 service repo に read 権限のある PAT (fine-grained 推奨、対象: account / battle / card / shop / scenario / gateway / newsfeed) |
+環境ごと（Settings > Environments > `dev` / `stg`）:
 
-### GitHub Variables (環境ごと)
-
-ops リポジトリの Settings > Environments > `dev` / `stg` > Environment variables:
-
-| 名前 | 値 |
-|------|-----|
-| `WIF_PROVIDER` | Workload Identity Federation プロバイダ |
-| `CI_SERVICE_ACCOUNT` | CI 用サービスアカウント |
-| `CLOUDSQL_INSTANCE_NAME` | Cloud SQL インスタンス名 |
-
-## newsfeed schema の配置
-
-newsfeed リポの schema は他サービス (`db/schema.sql`) と違い、リポルート
-(`schema.sql`) に置かれている。これは newsfeed が Cloud Run Job として運用
-されている都合で、リポ直下に `main.py` / `Dockerfile` があり `db/` サブ
-ディレクトリを持たないため。`schemas.lock.yaml` の `path` だけがそれを吸収
-しており、内容は他サービスと同じく `CREATE SCHEMA IF NOT EXISTS newsfeed;`
-と `newsfeed.` 修飾名で self-contained になっている。
+| 種別 | 名前 | 用途 |
+|---|---|---|
+| Variable | `WIF_PROVIDER` | Workload Identity Federation プロバイダ |
+| Variable | `CI_SERVICE_ACCOUNT` | CI 用サービスアカウント |
+| Variable | `CLOUDSQL_INSTANCE_NAME` | Cloud SQL インスタンス名 |
 
 ## ローカルでの dry-run
 
