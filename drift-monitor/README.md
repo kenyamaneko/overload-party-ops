@@ -24,17 +24,22 @@ plan 出力からは `Plan:` 行と変更対象リソース（最大 10 件）�
 ```yaml
 - repo: overload-party-infra
   environments:
-    - name: dev
-      path: environments/dev
-    - name: stg
-      path: environments/stg
-    - name: prod
-      path: environments/prod
-
-- repo: overload-party-k8s
-  environments:
-    - name: platform
-      path: terraform/environments/platform
+    - name: google-cloud/platform
+      path: providers/google-cloud/platform
+    - name: google-cloud/dev
+      path: providers/google-cloud/env/dev
+    - name: google-cloud/stg
+      path: providers/google-cloud/env/stg
+    - name: google-cloud/prod
+      path: providers/google-cloud/env/prod
+    - name: cloudflare
+      path: providers/cloudflare
+    - name: upstash/dev
+      path: providers/upstash/env/dev
+    - name: upstash/stg
+      path: providers/upstash/env/stg
+    - name: upstash/prod
+      path: providers/upstash/env/prod
 
 - repo: overload-party-ops
   environments:
