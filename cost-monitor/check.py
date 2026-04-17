@@ -11,7 +11,11 @@ from pathlib import Path
 
 import yaml
 
+# GKE クラスタは zonal。get-credentials や kubectl context 名には GKE_ZONE を使う。
+# PSC forwarding rule 等は region 単位なので REGION を使う（cost-monitor では未使用だが
+# 将来の regional API 呼び出し用に残す）。
 REGION = "asia-northeast1"
+GKE_ZONE = "asia-northeast1-a"
 GKE_PROJECT = "keyandnotes-platform"
 GKE_CLUSTER = "keyandnotes-main"
 CLOUDSQL_INSTANCE = "overload-party-db"
@@ -109,7 +113,7 @@ def setup_gke_credentials() -> tuple[bool, str | None]:
     """
     result = subprocess.run(
         ["gcloud", "container", "clusters", "get-credentials", GKE_CLUSTER,
-         "--region", REGION, "--project", GKE_PROJECT],
+         "--zone", GKE_ZONE, "--project", GKE_PROJECT],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -145,7 +149,7 @@ def check_gke_deployments(env: str) -> tuple[list[str], list[str]]:
             raw = kubectl_json(
                 "get", "deployment", deploy,
                 "-n", env,
-                f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}",
+                f"--context=gke_{GKE_PROJECT}_{GKE_ZONE}_{GKE_CLUSTER}",
             )
         except CommandError as e:
             errors.append(f"Deployment `{deploy}` チェック失敗: {e}")
@@ -168,7 +172,7 @@ def check_ingress(env: str) -> tuple[list[str], list[str]]:
         raw = kubectl_json(
             "get", "ingress", "overload-party",
             "-n", env,
-            f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}",
+            f"--context=gke_{GKE_PROJECT}_{GKE_ZONE}_{GKE_CLUSTER}",
             allow_not_found=True,
         )
     except CommandError as e:
@@ -238,7 +242,7 @@ def namespace_exists(env: str) -> tuple[bool, str | None]:
     """
     result = subprocess.run(
         ["kubectl", "get", "namespace", env,
-         f"--context=gke_{GKE_PROJECT}_{REGION}_{GKE_CLUSTER}"],
+         f"--context=gke_{GKE_PROJECT}_{GKE_ZONE}_{GKE_CLUSTER}"],
         capture_output=True, text=True,
     )
     if result.returncode == 0:
