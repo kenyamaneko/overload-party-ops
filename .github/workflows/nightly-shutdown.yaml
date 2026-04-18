@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        env: ${{ github.event_name == 'schedule' && fromJson('["dev"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event_name == 'schedule' && fromJson('["dev", "stg"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
       fail-fast: false
     steps:
       # env-lifecycle の down が GKE / Ingress / DNS / PSC のクリーンアップと
