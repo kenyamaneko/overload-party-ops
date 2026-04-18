@@ -26,6 +26,18 @@ jobs:
         working-directory: slack-commands-worker
         run: npm ci
 
+      - name: Verify CLOUD_RUN_URL points to a live service
+        working-directory: slack-commands-worker
+        run: |
+          set -euo pipefail
+          url=$(awk -F'"' '/^CLOUD_RUN_URL[[:space:]]*=/ {print $2}' wrangler.toml)
+          if [ -z "$url" ]; then
+            echo "CLOUD_RUN_URL not found in wrangler.toml" >&2
+            exit 1
+          fi
+          echo "Probing ${url}/health"
+          curl -fsS --max-time 10 "${url}/health"
+
       - name: Deploy Worker
         working-directory: slack-commands-worker
         run: npx wrangler deploy
