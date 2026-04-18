@@ -11,7 +11,31 @@ permissions:
   id-token: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: slack-commands/requirements.txt
+
+      - name: Install dependencies
+        working-directory: slack-commands
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Run pytest
+        working-directory: slack-commands
+        run: pytest
+
   build-deploy:
+    needs: test
     uses: ./.github/workflows/build-deploy-service.yaml
     with:
       service_dir: slack-commands
