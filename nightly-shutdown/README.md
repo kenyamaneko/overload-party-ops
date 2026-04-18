@@ -32,5 +32,5 @@ Slack コマンド `/gke-up <env>` / `/db-start <env>` でも実行可能。
 
 | 種別 | 名前 | 用途 |
 |---|---|---|
-| Secret | `K8S_DISPATCH_TOKEN` | `overload-party-k8s` に対する Actions: write 権限の fine-grained PAT |
-| Secret | `INFRA_DISPATCH_TOKEN` | `overload-party-infra` に対する Actions: write 権限の fine-grained PAT |
+| Secret | `K8S_DISPATCH` | `overload-party-k8s` に対する Actions: write 権限の fine-grained PAT |
+| Secret | `INFRA_DISPATCH` | `overload-party-infra` に対する Actions: write 権限の fine-grained PAT |

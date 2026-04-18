@@ -41,7 +41,7 @@ jobs:
           workflow: env-lifecycle.yaml
           repo: kenyamaneko/overload-party-k8s
           ref: main
-          token: ${{ secrets.K8S_DISPATCH_TOKEN }}
+          token: ${{ secrets.K8S_DISPATCH }}
           inputs: '{"action": "down", "environment": "${{ matrix.env }}", "slack_notification": "true"}'
           wait-for-completion: true
           wait-timeout-seconds: 1200
@@ -53,7 +53,7 @@ jobs:
           workflow: cloudsql-activation.yaml
           repo: kenyamaneko/overload-party-infra
           ref: main
-          token: ${{ secrets.INFRA_DISPATCH_TOKEN }}
+          token: ${{ secrets.INFRA_DISPATCH }}
           inputs: '{"action": "down", "environment": "${{ matrix.env }}", "slack_notification": "true"}'
           wait-for-completion: true
           wait-timeout-seconds: 600
