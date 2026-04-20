@@ -4,8 +4,18 @@
       path: providers/google-cloud/platform
     - name: google-cloud/dev
       path: providers/google-cloud/env/dev
+      # dev は夜間停止（nightly-shutdown）・Slack /db-stop で
+      # Cloud SQL の activation_policy を Terraform 外から落とす運用のため
+      # その差分だけでは drift として扱わない。他属性との複合差分は検知する。
+      suppress:
+        - type: google_sql_database_instance
+          attribute: settings[0].activation_policy
     - name: google-cloud/stg
       path: providers/google-cloud/env/stg
+      # stg も dev と同様に使わない時間帯は落とす運用
+      suppress:
+        - type: google_sql_database_instance
+          attribute: settings[0].activation_policy
     - name: google-cloud/prod
       path: providers/google-cloud/env/prod
     - name: cloudflare

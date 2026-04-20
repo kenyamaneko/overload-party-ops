@@ -5,11 +5,13 @@
 ## 動作フロー
 
 1. `targets.yaml` で定義された各リポジトリを PAT を使って shallow clone
-2. 環境ごとに `terraform init` + `terraform plan -detailed-exitcode` を実行
-3. exit code 2（差分あり）→ drift として報告、exit code 1（エラー）→ エラーとして報告
-4. drift またはエラーがあれば Slack に通知（全環境クリアなら通知しない）
+2. 環境ごとに `terraform init` + `terraform plan -out=... -detailed-exitcode` を実行
+3. exit code 2（差分あり）→ `terraform show -json` で構造化 JSON を取得
+4. `targets.yaml` の `suppress:` ルールに当てはまる属性差分だけを持つリソースは drift から除外
+5. 除外後に残った差分を drift として報告、exit code 1（エラー）→ エラーとして報告
+6. drift またはエラーがあれば Slack に通知（全環境クリアまたは全差分が suppress で吸収されたなら通知しない）
 
-plan 出力からは `Plan:` 行と変更対象リソース（最大 10 件）を抽出してサマリとする。
+サマリは変更対象リソースを最大 10 件まで載せ、超過分は集約行にまとめる。
 
 手動実行（`workflow_dispatch`）も可能。
 
@@ -22,28 +24,30 @@ plan 出力からは `Plan:` 行と変更対象リソース（最大 10 件）�
 ```yaml
 - repo: overload-party-infra
   environments:
-    - name: google-cloud/platform
-      path: providers/google-cloud/platform
     - name: google-cloud/dev
       path: providers/google-cloud/env/dev
-    - name: google-cloud/stg
-      path: providers/google-cloud/env/stg
-    - name: google-cloud/prod
-      path: providers/google-cloud/env/prod
-    - name: cloudflare
-      path: providers/cloudflare
-    - name: upstash/dev
-      path: providers/upstash/env/dev
-    - name: upstash/stg
-      path: providers/upstash/env/stg
-    - name: upstash/prod
-      path: providers/upstash/env/prod
-
-- repo: overload-party-ops
-  environments:
-    - name: shared
-      path: terraform/shared
+      suppress:
+        - type: google_sql_database_instance
+          attribute: settings[0].activation_policy
 ```
+
+### suppress の意味
+
+`suppress` は env 単位の drift 抑止ルール。各ルールは
+`{type, attribute}` のペアで、「このリソース型のこの属性だけが差分になっている
+update」を drift として通知しない。
+
+現在の主用途: dev/stg の Cloud SQL `activation_policy` は nightly-shutdown や
+Slack の `/db-stop`・`/db-start` で Terraform 外から書き換えるため、差分が
+出るのは日常運用。prod は suppress を設定しないので、同じ属性でも drift として
+通知される（= 意図しない停止を検知できる）。
+
+ルールは以下の条件すべてを満たすときだけ抑止に使われる:
+
+- `actions == ["update"]`（create / delete / replace のような構造的変更は常に通知）
+- リソースの `type` がルールと一致
+- 変更されている**全属性**がルール側の attribute に含まれる（1 つでも範囲外が
+  あればリソースごと visible に残す）
 
 ## Slack 通知
 
