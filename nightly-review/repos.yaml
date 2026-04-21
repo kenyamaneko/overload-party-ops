@@ -13,14 +13,18 @@
 - name: overload-party-matchmaking
   branch: main
 - name: overload-party-shop
-  branch: main
+  branch: develop
 - name: overload-party-scenario
+  branch: main
+- name: overload-party-support
   branch: main
 - name: overload-party-infra
   branch: main
 - name: overload-party-k8s
   branch: main
 - name: overload-party-newsfeed
+  branch: main
+- name: overload-party-news
   branch: main
 - name: overload-party-analytics
   branch: main
