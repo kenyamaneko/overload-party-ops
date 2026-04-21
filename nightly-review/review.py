@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -31,7 +32,14 @@ MAX_FILE_CONTENT_CHARS = 700000
 # Claude CLI は 1M context を扱えるため、出力分の余白を残して 1.1M に設定
 MAX_PROMPT_CHARS = 1100000
 
+# 429 (Anthropic API のレート制限) は 1 分ウィンドウで自然解消する一時エラーのため、
+# 即 abort せず指数バックオフで粘る。複数リポ連続実行時にローリングウィンドウが
+# 詰まるケースがあるため、最初の待ち時間は 60s から始め段階的に伸ばす。
+MAX_429_RETRIES = 3
+INITIAL_429_BACKOFF_SEC = 60
+
 REPOS_YAML = Path(__file__).parent / "repos.yaml"
+REVIEW_CRITERIA_YAML = Path(__file__).parent / "review_criteria.yaml"
 
 
 def load_repos() -> list[dict]:
@@ -42,29 +50,40 @@ def load_repos() -> list[dict]:
     with open(REPOS_YAML) as f:
         return yaml.safe_load(f)
 
-REVIEW_CRITERIA = (
-    "以下の観点でレビューしてください。\n"
-    "- 設計通りに実装されているか（設計ドキュメント・既存設計と実装の整合性）\n"
-    "- 拡張性と保守性が高い設計であること\n"
-    "- 同じような処理を複数箇所に書いていないか\n"
-    "- バグのリスクがないか\n"
-    "- セキュリティリスクがないか\n"
-    "- 使用していないコードがないか\n"
-    "- 場当たり的なワークアラウンドで設計を汚していないか\n"
-    "- 未実装のTODOがないか\n"
-    "- ディレクトリ構成が整理されているか\n"
-    "- ドキュメントとコードの乖離がないか\n"
-    "- エラーハンドリングが適切か（エラーを握りつぶしていないか）\n"
-    "- テストコードは仕様に沿っているか\n"
-    "- テストコードのデータパターンが十分か\n"
-    "- テストを通すために設計を汚していないか\n"
-    "- 実装をなぞるだけのテストになっていないか（仕様ベースになっているか）\n"
-    "- 実装をなぞるだけのコメントがないか（Docコメントは除く）\n"
-    "- 実装意図がわかりにくい箇所に意図を表すコメントがあるか\n"
-    "- ファイル・クラス・関数の責務が明確に分離されているか\n"
-    "- リポジトリ間の責務が明確に分離されているか\n"
-    "- 通信用の文字列（エンドポイント、イベント名、ヘッダ名、トピック名など）はリテラル直書きではなく共通パッケージの定数を使っているか\n"
-)
+
+def load_review_criteria() -> str:
+    """レビュー観点 YAML を読み込み、プロンプトに差し込む Markdown 文字列に整形します。
+
+    YAML 構造の異常（categories キー欠落、items が空など）は silent に空観点で
+    レビューを走らせないよう、すべて例外で止める。意図しない空観点で Claude が
+    LGTM を返すと「レビューなし」が silent に通ってしまうため。
+    """
+    with open(REVIEW_CRITERIA_YAML) as f:
+        data = yaml.safe_load(f)
+
+    categories = data["categories"]
+    if not isinstance(categories, list) or not categories:
+        raise ValueError(
+            f"{REVIEW_CRITERIA_YAML}: 'categories' は非空のリストである必要があります"
+        )
+
+    lines = ["以下の観点でレビューしてください。"]
+    for cat in categories:
+        name = cat["name"]
+        items = cat["items"]
+        if not isinstance(items, list) or not items:
+            raise ValueError(
+                f"{REVIEW_CRITERIA_YAML}: カテゴリ '{name}' の 'items' は非空のリストである必要があります"
+            )
+        lines.append("")
+        lines.append(f"## {name}")
+        for item in items:
+            lines.append(f"- {item}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+REVIEW_CRITERIA = load_review_criteria()
 
 DIFF_PROMPT = (
     "以下は昨日からの差分です。\n"
@@ -82,28 +101,55 @@ class ClaudeError(Exception):
     """Claude CLI の実行が失敗したことを示します。"""
 
 
-def run_claude(prompt: str) -> str | None:
-    """Claude CLI にプロンプトを渡してレビュー結果を取得します。"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write(prompt)
-        f.flush()
-        try:
-            with open(f.name) as stdin_file:
-                result = subprocess.run(
-                    ["claude", "-p", "--allowedTools", "Read,Grep,Glob"],
-                    stdin=stdin_file,
-                    capture_output=True, text=True,
-                )
-        finally:
-            os.unlink(f.name)
+def _is_rate_limit_error(detail: str) -> bool:
+    """Claude CLI のエラー出力が 429 レート制限かを判定します。"""
+    # HTTP ステータスコードで判定する。"rate limit" 等の文言一致にすると
+    # Claude CLI のメッセージ文面変更で silent に壊れる可能性があるため、
+    # API が返す "(429)" を唯一の識別子として固定する。
+    return "(429)" in detail
 
-    if result.returncode != 0:
+
+def run_claude(prompt: str) -> str | None:
+    """Claude CLI にプロンプトを渡してレビュー結果を取得します。
+
+    429 レート制限を検出した場合は指数バックオフで最大 MAX_429_RETRIES 回
+    再試行する。非 429 エラーは即座に例外を投げる（待っても解消しないため）。
+    """
+    backoff = INITIAL_429_BACKOFF_SEC
+    for attempt in range(MAX_429_RETRIES + 1):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write(prompt)
+            f.flush()
+            try:
+                with open(f.name) as stdin_file:
+                    result = subprocess.run(
+                        ["claude", "-p", "--allowedTools", "Read,Grep,Glob"],
+                        stdin=stdin_file,
+                        capture_output=True, text=True,
+                    )
+            finally:
+                os.unlink(f.name)
+
+        if result.returncode == 0:
+            body = result.stdout.strip()
+            return body if body else None
+
         # Claude CLI はエラーを stdout に吐くことがあるため両方載せる
         detail = _format_cmd_failure(result.stderr, result.stdout)
-        raise ClaudeError(f"exit code {result.returncode}: {detail}")
 
-    body = result.stdout.strip()
-    return body if body else None
+        # 429 以外は待っても解消しないため即 raise する（握りつぶし・無駄待ち防止）
+        if not _is_rate_limit_error(detail) or attempt >= MAX_429_RETRIES:
+            raise ClaudeError(f"exit code {result.returncode}: {detail}")
+
+        print(
+            f"  Rate limit hit (attempt {attempt + 1}/{MAX_429_RETRIES + 1}). "
+            f"Sleeping {backoff}s before retry..."
+        )
+        time.sleep(backoff)
+        backoff *= 2
+
+    # ループは必ず return か raise で抜ける。到達した場合は制御フロー異常。
+    raise ClaudeError("run_claude: unreachable retry loop exit")
 
 
 def truncate_diff(diff: str, limit: int) -> tuple[str, list[str]]:

@@ -16,6 +16,7 @@ from review import (
     get_diff,
     get_file_contents,
     is_no_issues,
+    load_review_criteria,
     notify_slack,
     review_diff,
     review_repo,
@@ -496,6 +497,134 @@ class TestRunClaude:
         with patch("review.subprocess.run", return_value=_proc(1, stdout="error in stdout", stderr="")):
             with pytest.raises(ClaudeError, match="error in stdout"):
                 run_claude("prompt")
+
+    def test_429_retries_then_succeeds(self):
+        """観点: 429 レート制限は指数バックオフで再試行し、途中で成功したら結果を返す。
+
+        Rate limit は 1 分ウィンドウで自然解消する一時エラーのため、即 abort せず粘る仕様。
+        初回 429 → sleep → 再試行で成功するパスが壊れないことを固定する。
+        """
+        rate_limit_stdout = "API Error: Request rejected (429) · rate limit"
+        procs = [
+            _proc(1, stdout=rate_limit_stdout),
+            _proc(0, stdout="LGTM"),
+        ]
+        with patch("review.subprocess.run", side_effect=procs) as run, \
+             patch("review.time.sleep") as sleep:
+            assert run_claude("prompt") == "LGTM"
+        assert run.call_count == 2
+        assert sleep.call_count == 1
+
+    def test_429_retries_exhausted_raises(self):
+        """観点: MAX_429_RETRIES 回再試行しても 429 が続く場合は ClaudeError を投げる。
+
+        無限リトライを防ぎつつ、握りつぶしもしない上限の固定。
+        最後の試行でも 429 なら「本当にレート制限で失敗」として人間に通知する。
+        """
+        rate_limit_stdout = "API Error: Request rejected (429) · rate limit"
+        # MAX_429_RETRIES + 1 回 = 初回 + 再試行回数 の全てで 429
+        with patch("review.subprocess.run", return_value=_proc(1, stdout=rate_limit_stdout)) as run, \
+             patch("review.time.sleep") as sleep:
+            with pytest.raises(ClaudeError, match=r"\(429\)"):
+                run_claude("prompt")
+        # 初回 + MAX_429_RETRIES 回の再試行 = MAX_429_RETRIES + 1 回の実行
+        assert run.call_count == 4
+        # 最後の試行のあとは sleep しない（sleep するとしても再試行しないので無駄）
+        assert sleep.call_count == 3
+
+    def test_non_429_error_does_not_retry(self):
+        """観点: 429 以外のエラーは即 raise し、再試行の sleep も発生しない。
+
+        「待てば直る」性質の無いエラー（プロンプト不正・CLI バグ等）でリトライすると
+        無駄に時間を消費するため、429 専用のリトライ分岐であることを固定する。
+        """
+        with patch("review.subprocess.run", return_value=_proc(1, stderr="some other error")) as run, \
+             patch("review.time.sleep") as sleep:
+            with pytest.raises(ClaudeError, match="some other error"):
+                run_claude("prompt")
+        assert run.call_count == 1
+        sleep.assert_not_called()
+
+
+class TestLoadReviewCriteria:
+    """レビュー観点 YAML のロードと整形。構造異常は silent に通さず例外にする仕様を固定。
+
+    空観点で Claude が LGTM を返すと「レビューなし」の silent fallback が起きるため、
+    ファイル構造の異常は必ず例外で止める。
+    """
+
+    def test_formats_categories_as_markdown_sections(self, tmp_path):
+        """観点: YAML が正常な場合、カテゴリ名が "## {name}" 見出し、観点が "- {item}" で展開される。
+
+        この整形が崩れると Claude 側のレビュー品質に直結するため、
+        出力フォーマットを仕様として固定する。
+        """
+        yaml_file = tmp_path / "criteria.yaml"
+        yaml_file.write_text(
+            "categories:\n"
+            "  - name: 設計\n"
+            "    items:\n"
+            "      - 観点A\n"
+            "      - 観点B\n"
+            "  - name: テスト\n"
+            "    items:\n"
+            "      - 観点C\n"
+        )
+        with patch("review.REVIEW_CRITERIA_YAML", yaml_file):
+            result = load_review_criteria()
+        assert result.startswith("以下の観点でレビューしてください。")
+        assert "## 設計" in result
+        assert "- 観点A" in result
+        assert "- 観点B" in result
+        assert "## テスト" in result
+        assert "- 観点C" in result
+
+    def test_missing_categories_key_raises(self, tmp_path):
+        """観点: categories キーが無い YAML はエラー化（silent に空観点で走らせない）。"""
+        yaml_file = tmp_path / "criteria.yaml"
+        yaml_file.write_text("other_key: value\n")
+        with patch("review.REVIEW_CRITERIA_YAML", yaml_file):
+            with pytest.raises(KeyError):
+                load_review_criteria()
+
+    def test_empty_categories_list_raises(self, tmp_path):
+        """観点: categories が空リストの YAML はエラー化。
+
+        空観点でのレビュー実行を防ぐ。silent に通すと Claude が LGTM を返して
+        「指摘なし」扱いになり、レビューが無言で機能停止するのを防ぐ。
+        """
+        yaml_file = tmp_path / "criteria.yaml"
+        yaml_file.write_text("categories: []\n")
+        with patch("review.REVIEW_CRITERIA_YAML", yaml_file):
+            with pytest.raises(ValueError, match="categories"):
+                load_review_criteria()
+
+    def test_empty_items_in_category_raises(self, tmp_path):
+        """観点: カテゴリの items が空リストの場合もエラー化。
+
+        カテゴリだけ書いて中身を書き忘れた場合に silent に通すと観点が歯抜けになるため、
+        部分的な不整合もエラーで止める仕様の固定。
+        """
+        yaml_file = tmp_path / "criteria.yaml"
+        yaml_file.write_text(
+            "categories:\n"
+            "  - name: 設計\n"
+            "    items: []\n"
+        )
+        with patch("review.REVIEW_CRITERIA_YAML", yaml_file):
+            with pytest.raises(ValueError, match="items"):
+                load_review_criteria()
+
+    def test_missing_name_or_items_key_raises(self, tmp_path):
+        """観点: name / items キー自体が欠けている場合も KeyError で止める（silent skip しない）。"""
+        yaml_file = tmp_path / "criteria.yaml"
+        yaml_file.write_text(
+            "categories:\n"
+            "  - name: 設計\n"  # items キーが無い
+        )
+        with patch("review.REVIEW_CRITERIA_YAML", yaml_file):
+            with pytest.raises(KeyError):
+                load_review_criteria()
 
 
 class TestGetFileContents:
