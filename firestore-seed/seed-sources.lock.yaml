@@ -1,0 +1,19 @@
+# firestore-seed source lock
+#
+# Firestore `game_config` コレクションの初期値を common リポから取得するための
+# ソース定義。db-migrate/schemas.lock.yaml と同じパターン。
+#
+# ref には再現性のため commit SHA を入れてもよい。通常は main を pin する。
+# main 以外に振れるのは、事故復旧 / 特定リビジョンに固定した stg 検証 / bisect 時のみ。
+#
+# 更新手順:
+#   1. common リポで data/game_config_defaults.yaml を編集・merge
+#   2. 本ファイルの ref を更新 (特定コミットに pin する場合)
+#   3. 対象環境で seed_game_config.py を実行
+
+sources:
+  game_config:
+    repo: kenyamaneko/overload-party-common
+    path: data/game_config_defaults.yaml
+    ref: main
+    description: Cloud Firestore game_config コレクションの初期値
