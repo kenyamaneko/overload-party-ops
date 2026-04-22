@@ -2,8 +2,8 @@ name: Cost Monitor
 
 on:
   schedule:
-    # 8:00 AM JST = 23:00 UTC (previous day)
-    - cron: "0 23 * * *"
+    # 8:00 / 14:00 / 20:00 JST
+    - cron: "0 23,5,11 * * *"
   workflow_dispatch:
 
 permissions:
