@@ -43,14 +43,10 @@ Slack のスラッシュコマンドは 3 秒以内に応答しなければタ�
 
 ### 3. Terraform apply
 
-```bash
-cd terraform/shared
-terraform apply    # deploy SA の IAM + 共有 Secret
-
-cd ../slack_commands
-terraform init
-terraform apply    # Cloud Run Service, SA, Secret, IAM, dispatch-secret を作成
-```
+Terraform の管理は overload-party-infra リポに集約されている。
+`providers/google-cloud/ops/`（slack-commands module 含む）と
+`providers/cloudflare-workers/`（slack-commands-proxy Worker Script）を
+`terraform apply` する。
 
 ### 4. Secrets 登録
 
