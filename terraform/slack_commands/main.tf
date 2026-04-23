@@ -31,6 +31,15 @@ resource "google_secret_manager_secret" "dispatch_secret" {
   }
 }
 
+# slack-commands 専用の GitHub PAT (nightly-review とは別値を使う)
+resource "google_secret_manager_secret" "github_token" {
+  secret_id = var.github_token_secret
+
+  replication {
+    auto {}
+  }
+}
+
 # --- Service Account ---
 
 resource "google_service_account" "slack_commands" {
@@ -44,7 +53,15 @@ resource "google_secret_manager_secret_iam_member" "dispatch_secret" {
   member    = "serviceAccount:${google_service_account.slack_commands.email}"
 }
 
-# github-pat-nightly-review, github-pat-slack-commands, slack-webhook-url は shared/ で管理。accessors リストへの追加が必要。
+resource "google_secret_manager_secret_iam_member" "github_token" {
+  secret_id = google_secret_manager_secret.github_token.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.slack_commands.email}"
+}
+
+# slack-webhook-url は真の共有 Secret として shared/ で管理される。
+# slack-commands SA の accessor は shared/terraform.tfvars の
+# slack_webhook_url_accessors リストに追加することで付与される。
 
 # Cloud SQL 操作に必要（dev/stg プロジェクト）
 resource "google_project_iam_member" "cloudsql_admin" {
