@@ -1,0 +1,7 @@
+# テスト / 開発時にしか使わないファイルはイメージに含めない。
+# 理由: イメージサイズを抑える & 実行環境に不要なコードを置かない。
+test_review.py
+__pycache__/
+.pytest_cache/
+.DS_Store
+README.md

@@ -43,10 +43,13 @@ REVIEW_CRITERIA_YAML = Path(__file__).parent / "review_criteria.yaml"
 
 
 def load_repos() -> list[dict]:
-    """レビュー対象リポジトリの設定を読み込みます。"""
-    raw = os.environ.get("REPOS_JSON", "")
-    if raw:
-        return json.loads(raw)
+    """レビュー対象リポジトリの設定を repos.yaml から読み込みます。
+
+    Cloud Run Jobs 上でコンテナとして実行されるため、repos.yaml はイメージに
+    同梱される SSoT になる。環境変数オーバーライドを許すと「コンテナに焼き込まれた
+    設定」と「実行時に注入された設定」が二重管理になり、どちらで動いたか追えなくなるため、
+    YAML 読み込みに一本化する。
+    """
     with open(REPOS_YAML) as f:
         return yaml.safe_load(f)
 
