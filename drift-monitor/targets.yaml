@@ -18,16 +18,15 @@
           attribute: settings[0].activation_policy
     - name: google-cloud/prod
       path: providers/google-cloud/env/prod
+    - name: google-cloud/ops
+      path: providers/google-cloud/ops
     - name: cloudflare
       path: providers/cloudflare
+    - name: cloudflare-workers
+      path: providers/cloudflare-workers
     - name: upstash/dev
       path: providers/upstash/env/dev
     - name: upstash/stg
       path: providers/upstash/env/stg
     - name: upstash/prod
       path: providers/upstash/env/prod
-
-- repo: overload-party-ops
-  environments:
-    - name: shared
-      path: terraform/shared
