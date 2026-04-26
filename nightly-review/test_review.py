@@ -17,6 +17,7 @@ from review import (
     get_file_contents,
     is_no_issues,
     load_review_criteria,
+    main,
     notify_slack,
     review_diff,
     review_repo,
@@ -400,7 +401,7 @@ class TestReviewRepo:
         self.create_issue.assert_called_once()
         assert self.notify.call_count == 1
         title_arg, body_arg = self.notify.call_args.args
-        assert title_arg.startswith("[自動レビュー")
+        assert "[自動レビュー" in title_arg
         assert "repo-x" in title_arg
         assert "https://example/issue/1" in body_arg
 
@@ -793,12 +794,61 @@ class TestLogReference:
             ref = _log_reference()
         assert ref == "<https://github.com/org/repo/actions/runs/1|Actions ログ>"
 
+    def test_cloud_run_job_env_returns_logging_link(self):
+        """観点: Cloud Run Job の env が揃った時は Logging Explorer の Slack リンクを返す。
+
+        nightly-review は Cloud Run Jobs で実行されており、Actions URL は取れない。
+        この経路で URL を出さないと Slack 通知から「stdout どこで見るの？」になり
+        前回の silent failure（placeholder image）の原因調査が遅れた経緯があるため、
+        Cloud Run env (CLOUD_RUN_EXECUTION / CLOUD_RUN_JOB / GOOGLE_CLOUD_PROJECT)
+        からログクエリ URL を組み立てる仕様を固定する。
+        """
+        env = {
+            "CLOUD_RUN_EXECUTION": "nightly-review-79jgf",
+            "CLOUD_RUN_JOB": "nightly-review",
+            "GOOGLE_CLOUD_PROJECT": "overload-party-ops",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            ref = _log_reference()
+        assert ref.startswith("<https://console.cloud.google.com/logs/query;query=")
+        assert ref.endswith("|Cloud Logging>")
+        assert "nightly-review-79jgf" in ref
+        assert "overload-party-ops" in ref
+
+    def test_actions_url_takes_precedence_over_cloud_run(self):
+        """観点: 両環境の env が揃っていても Actions URL を優先する（実行元の優先順位を固定）。"""
+        env = {
+            "GITHUB_SERVER_URL": "https://github.com",
+            "GITHUB_REPOSITORY": "org/repo",
+            "GITHUB_RUN_ID": "1",
+            "CLOUD_RUN_EXECUTION": "exec",
+            "CLOUD_RUN_JOB": "job",
+            "GOOGLE_CLOUD_PROJECT": "proj",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            ref = _log_reference()
+        assert "actions/runs/1" in ref
+        assert "console.cloud.google.com" not in ref
+
+    def test_partial_cloud_run_env_falls_through_to_absence(self):
+        """観点: Cloud Run env が部分的に欠ける場合は URL を作らず「取得不可」へ倒す。
+
+        欠けた要素を空文字で埋めて壊れた URL を Slack に貼る silent な品質劣化を防ぐ。
+        """
+        env = {
+            "CLOUD_RUN_EXECUTION": "exec",
+            "CLOUD_RUN_JOB": "job",
+            # GOOGLE_CLOUD_PROJECT を欠落させる
+        }
+        with patch.dict(os.environ, env, clear=True):
+            ref = _log_reference()
+        assert "取得不可" in ref
+
     def test_url_missing_indicates_absence_explicitly(self):
-        """観点: URL 取得不可でも silent に省略せず、理由と代替手段（stdout）を明示。"""
+        """観点: どの実行環境も特定できない時、silent に省略せず取得不可を明示する。"""
         with patch.dict(os.environ, {}, clear=True):
             ref = _log_reference()
         assert "取得不可" in ref
-        assert "stdout" in ref
 
 
 class TestReviewRepoErrorNotificationsIncludeLogReference:
@@ -863,3 +913,115 @@ class TestReviewRepoErrorNotificationsIncludeLogReference:
         body = self._notify_body()
         assert "actions/runs/999" in body
         assert "Issue 作成失敗" in body
+
+
+class TestSlackTitleEmojiPrefix:
+    """Slack 通知タイトルに種別マーカー絵文字が付いている仕様の固定。
+
+    ops リポ全体で他の通知（cost-monitor / drift-monitor / slack-commands）が
+    `:x:` `:warning:` `:rotating_light:` `:white_check_mark:` `:rocket:` で種別を
+    視覚的に伝えており、Nightly Review だけ無印だと一覧で重要度が一致しなくなる。
+    本クラスは「種別ごとに正しい絵文字が付く」ことを仕様として固定する。
+
+    なお `_notify_title` は `notify_slack` 第 1 引数。本文ではなくタイトル側に
+    絵文字を付けるのが既存規約。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patches(self):
+        with patch("review.notify_slack") as notify, \
+             patch("review.ensure_label"), \
+             patch("review.issue_exists", return_value=False), \
+             patch("review.create_issue", return_value="https://example/issue/1") as create_issue, \
+             patch("review.review_diff") as review_diff:
+            self.notify = notify
+            self.create_issue = create_issue
+            self.review_diff = review_diff
+            yield
+
+    def _call(self, entry=None):
+        return review_repo(
+            entry=entry or {"name": "repo-x", "branch": "main"},
+            today="2026-04-17",
+            yesterday="2026-04-16",
+            skip_if_exists=True,
+            label="auto-review",
+        )
+
+    def _notify_title(self) -> str:
+        return self.notify.call_args.args[0]
+
+    def test_branch_unset_uses_x_marker(self):
+        """観点: 設定エラー（branch 未設定）は :x: でエラーカテゴリとして表示。"""
+        self._call(entry={"name": "repo-x"})
+        assert self._notify_title().startswith(":x: ")
+
+    def test_prompt_too_large_uses_warning_marker(self):
+        """観点: スキップ系（PromptTooLarge）は :warning:。
+
+        エラーではなく「自動処理をやめて人間判断に任せた」状態のため、
+        :x: ではなく :warning: で区別する。
+        """
+        self.review_diff.side_effect = PromptTooLargeError("too big")
+        self._call()
+        assert self._notify_title().startswith(":warning: ")
+
+    def test_claude_error_uses_x_marker(self):
+        """観点: ClaudeError は :x:。"""
+        self.review_diff.side_effect = ClaudeError("boom")
+        self._call()
+        assert self._notify_title().startswith(":x: ")
+
+    def test_file_content_fetch_error_uses_x_marker(self):
+        """観点: FileContentFetchError は :x:。"""
+        self.review_diff.side_effect = FileContentFetchError("fetch failed")
+        self._call()
+        assert self._notify_title().startswith(":x: ")
+
+    def test_gh_error_uses_x_marker(self):
+        """観点: GhError は :x:。"""
+        self.review_diff.side_effect = GhError("gh failed")
+        self._call()
+        assert self._notify_title().startswith(":x: ")
+
+    def test_issue_create_error_uses_x_marker(self):
+        """観点: IssueCreateError は :x:。"""
+        self.review_diff.return_value = "- 指摘あり"
+        self.create_issue.side_effect = IssueCreateError("create failed")
+        self._call()
+        assert self._notify_title().startswith(":x: ")
+
+    def test_review_body_notify_uses_memo_marker(self):
+        """観点: 指摘あり Issue 作成成功通知は :memo:（成功カテゴリだが「読むべき内容あり」を示す）。
+
+        :white_check_mark: にしてしまうと「問題なし」と読み違えるため、
+        Issue 作成済み（=指摘あり）を表す :memo: を使う仕様。
+        """
+        self.review_diff.return_value = "- 指摘1"
+        self._call()
+        assert self._notify_title().startswith(":memo: ")
+
+    def test_unexpected_exception_inside_loop_uses_rotating_light_marker(self):
+        """観点: リポジトリループ内で想定外例外が起きた時、:rotating_light: 付きで通知する。
+
+        review_repo の except 群に該当しない例外は main() の外側 try で拾う設計で、
+        この経路の絵文字付与が外れると「予期しないエラーだけ無印で目立たない」
+        というリグレッションが起きるため固定する。
+        """
+        with patch("review.load_repos", return_value=[{"name": "repo-x", "branch": "main"}]), \
+             patch("review.review_repo", side_effect=RuntimeError("unexpected boom")):
+            with pytest.raises(SystemExit):
+                main()
+        assert self._notify_title().startswith(":rotating_light: ")
+        assert "repo-x" in self._notify_title()
+
+    def test_unexpected_exception_before_loop_uses_rotating_light_marker(self):
+        """観点: load_repos 等のループ前段階で想定外例外が起きた時も :rotating_light: が付く。
+
+        設定ファイル不正など「全リポ巻き添え」の重大エラーで、最も人間の即応が必要な経路。
+        ここを :x: と同じ扱いにすると重要度が見分けにくくなるため :rotating_light: 固定。
+        """
+        with patch("review.load_repos", side_effect=RuntimeError("config broken")):
+            with pytest.raises(SystemExit):
+                main()
+        assert self._notify_title().startswith(":rotating_light: ")

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import traceback
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -230,17 +231,42 @@ def _actions_run_url() -> str:
     return ""
 
 
+def _cloud_run_logs_url() -> str:
+    """Cloud Run Job 実行中なら当該 execution のログを開く Logging Explorer URL を返します。
+
+    Cloud Run Jobs は CLOUD_RUN_EXECUTION / CLOUD_RUN_JOB / GOOGLE_CLOUD_PROJECT を
+    自動注入する。3 つ揃った時のみ URL を構築し、欠けたら空文字（呼び出し側が
+    「URL 取得不可」を明示する責務を持つ）。
+    """
+    execution = os.environ.get("CLOUD_RUN_EXECUTION", "")
+    job = os.environ.get("CLOUD_RUN_JOB", "")
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+    if not (execution and job and project):
+        return ""
+    query = (
+        f'resource.type="cloud_run_job"\n'
+        f'resource.labels.job_name="{job}"\n'
+        f'labels."run.googleapis.com/execution_name"="{execution}"'
+    )
+    encoded = urllib.parse.quote(query, safe="")
+    return f"https://console.cloud.google.com/logs/query;query={encoded}?project={project}"
+
+
 def _log_reference() -> str:
     """Slack 本文に埋め込む「ログ所在」のテキスト。
 
-    Actions URL が取れる時はリンク、取れない時は「取得不可」理由を明示する。
+    GitHub Actions / Cloud Run Job のいずれかで動いていればその実行ログへの
+    リンクを返し、どちらでも特定できない時は「取得不可」理由を明示する。
     「詳細はログ」とだけ書いてユーザーが実際の所在を探せない状態を作らないため、
-    silent に URL を省略せず、どちらのケースも明示的に表現する。
+    silent に URL を省略せず、どのケースも明示的に表現する。
     """
     run_url = _actions_run_url()
     if run_url:
         return f"<{run_url}|Actions ログ>"
-    return "ログ URL 取得不可 (GitHub Actions 外の実行 — stdout を確認)"
+    cloud_run_url = _cloud_run_logs_url()
+    if cloud_run_url:
+        return f"<{cloud_run_url}|Cloud Logging>"
+    return "ログ URL 取得不可 (実行環境を特定できず — 実行基盤のログを直接確認)"
 
 
 def notify_slack(title: str, body: str) -> None:
@@ -276,7 +302,7 @@ def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, l
     if not branch:
         msg = f"`{repo}`: branch が未設定のためスキップしました"
         print(f"  {msg}")
-        notify_slack("Nightly Review 設定エラー", msg)
+        notify_slack(":x: Nightly Review 設定エラー", msg)
         return True
 
     title = f"[自動レビュー {today}] 差分 {repo}"
@@ -293,27 +319,27 @@ def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, l
         # 文字数計算情報は短いので Slack にも載せる
         print(f"  Error: {e}")
         notify_slack(
-            f"Nightly Review スキップ: {repo}",
+            f":warning: Nightly Review スキップ: {repo}",
             f"変更が多すぎて自動レビューできません\n{e}",
         )
         return True
     except ClaudeError as e:
         # stderr/stdout 詳細は print で Actions ログに流す。Slack は短く
         print(f"  Error: {e}")
-        notify_slack(f"Nightly Review エラー: {repo}", f"Claude CLI 失敗 (詳細: {_log_reference()})")
+        notify_slack(f":x: Nightly Review エラー: {repo}", f"Claude CLI 失敗 (詳細: {_log_reference()})")
         return True
     except FileContentFetchError as e:
         # レビュー対象ファイルの一部が欠けるとレビュー品質が無言で劣化するため、
         # 取得失敗は握りつぶさずに Slack に必ず流して人間に判断を委ねる。
         print(f"  Error: {e}")
         notify_slack(
-            f"Nightly Review エラー: {repo}",
+            f":x: Nightly Review エラー: {repo}",
             f"変更ファイルの全文取得に失敗しました\n{e}",
         )
         return True
     except GhError as e:
         print(f"  Error: {e}")
-        notify_slack(f"Nightly Review エラー: {repo}", f"GitHub API 失敗 (詳細: {_log_reference()})")
+        notify_slack(f":x: Nightly Review エラー: {repo}", f"GitHub API 失敗 (詳細: {_log_reference()})")
         return True
 
     if body is None:
@@ -327,10 +353,10 @@ def review_repo(entry: dict, today: str, yesterday: str, skip_if_exists: bool, l
         issue_url = create_issue(repo, title, label, body)
     except IssueCreateError as e:
         print(f"  Error: {e}")
-        notify_slack(f"Nightly Review エラー: {repo}", f"Issue 作成失敗 (詳細: {_log_reference()})")
+        notify_slack(f":x: Nightly Review エラー: {repo}", f"Issue 作成失敗 (詳細: {_log_reference()})")
         return True
 
-    notify_slack(title, f"レビューコメントがあります\n{issue_url}")
+    notify_slack(f":memo: {title}", f"レビューコメントがあります\n{issue_url}")
     return False
 
 
@@ -358,7 +384,7 @@ def main() -> None:
                 repo = entry.get("name", "(unknown)")
                 exc_line = tb.strip().splitlines()[-1] if tb.strip() else "(unknown)"
                 notify_slack(
-                    f"Nightly Review 想定外エラー: {repo}",
+                    f":rotating_light: Nightly Review 想定外エラー: {repo}",
                     f"{exc_line}\n詳細: {_log_reference()}",
                 )
                 has_error = True
@@ -367,7 +393,7 @@ def main() -> None:
         tb = traceback.format_exc()
         print(tb)
         exc_line = tb.strip().splitlines()[-1] if tb.strip() else "(unknown)"
-        notify_slack("Nightly Review 想定外エラー", f"{exc_line}\n詳細: {_log_reference()}")
+        notify_slack(":rotating_light: Nightly Review 想定外エラー", f"{exc_line}\n詳細: {_log_reference()}")
         sys.exit(1)
 
     print("=== Nightly review complete ===")
