@@ -98,7 +98,7 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
+          service_account: ${{ vars.DB_MIGRATOR_SERVICE_ACCOUNT }}
           token_format: access_token
 
       - name: Set up Cloud SDK
