@@ -54,6 +54,6 @@ jobs:
           repo: kenyamaneko/overload-party-infra
           ref: main
           token: ${{ secrets.INFRA_DISPATCH }}
-          inputs: '{"action": "down", "environment": "${{ matrix.env }}", "slack_notification": "true"}'
+          inputs: '{"action": "down", "environment": "${{ matrix.env }}"}'
           wait-for-completion: true
           wait-timeout-seconds: 600
