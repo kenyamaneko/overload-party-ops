@@ -1,7 +1,5 @@
 - repo: overload-party-infra
   environments:
-    - name: google-cloud/platform
-      path: providers/google-cloud/platform
     - name: google-cloud/dev
       path: providers/google-cloud/env/dev
       # dev は夜間停止（nightly-shutdown）・Slack /db-stop で
