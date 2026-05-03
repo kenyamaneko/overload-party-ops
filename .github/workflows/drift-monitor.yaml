@@ -39,7 +39,7 @@ jobs:
       - name: Run drift check
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          GITHUB_TOKEN: ${{ secrets.GH_PAT_NIGHTLY_REVIEW }}
+          GITHUB_TOKEN: ${{ secrets.INFRA_DRIFT_MONITOR_TOKEN }}
           TF_VAR_cloudflare_cdn_api_token: ${{ secrets.CLOUDFLARE_CDN_API_TOKEN }}
           TF_VAR_cloudflare_workers_api_token: ${{ secrets.CLOUDFLARE_WORKERS_API_TOKEN }}
           TF_VAR_upstash_email: ${{ vars.UPSTASH_EMAIL }}

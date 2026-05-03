@@ -1,24 +1,32 @@
 ---
-description: 17 リポの前日 00:00 JST 以降の差分を Subagent で並列レビューし、~/reviews/{前日日付}/ に書き出して指摘があれば各リポに Issue 起票する
+description: 全リポの前日 00:00 JST 以降の差分を Subagent で並列レビューし、~/reviews/{前日日付}/ に書き出して指摘があれば各リポに Issue 起票する
 allowed-tools: Bash, Agent, Read, Write
 ---
 
 # /review-yesterday
 
 前日 00:00 JST 以降の各リポジトリの差分を、リポ全体を読みながら並列でレビューする。
-Cloud Run Job 上の旧 nightly-review (差分のみを Claude API に投げる方式) の置き換え。
+詳細な背景・仕様は @nightly-review/README.md を参照。
 
 ## 全体方針
 
-- 親エージェント (このコマンド) は **オーケストレーション専任**。レビュー本体は実行しない
-- 17 リポを `general-purpose` Subagent に **すべて並列で** 投げる (1 メッセージ内で複数 Agent 呼び出し)
+- このコマンド (親) は **オーケストレーション専任**。レビュー本体は Subagent が実行する
+- 対象リポと観点は @nightly-review/repos.yaml と @nightly-review/review_criteria.yaml を SSoT とする
+- これらを Read してから、リポ数ぶんの `general-purpose` Subagent を **すべて並列で** 投げる (1 メッセージ内で複数 Agent 呼び出し)
 - Subagent は各自で `gh repo clone` してリポ全体を Read/Grep/Glob で参照し、観点に沿ってレビューする
 - 結果は `~/reviews/{前日日付}/{repo}.md` に書き出す。指摘ありなら GitHub Issue も起票する
 - 全 Subagent 完了後、親が `~/reviews/{前日日付}/index.md` を集約生成してチャットに返す
 
 ## 手順
 
-### 1. 日付計算
+### 1. 設定ファイルの読み込み
+
+- @nightly-review/repos.yaml を Read してレビュー対象 `(name, branch)` のリストを取得
+- @nightly-review/review_criteria.yaml を Read して観点を取得し、Subagent プロンプトに差し込む Markdown を組み立てる
+  - フォーマット: 各カテゴリを `## {name}` セクション、items を箇条書きにする
+  - YAML 構造に異常 (categories キー欠落 / items が空) があれば、フォールバックせずユーザーに報告して終了する
+
+### 2. 日付計算と出力ディレクトリ作成
 
 JST で「前日」と「実行日」を計算する。前日日付がレビュー対象範囲の起点、実行日が Issue タイトルに使う。
 
@@ -28,31 +36,9 @@ YESTERDAY=$(TZ=Asia/Tokyo date -v-1d +%Y-%m-%d)  # macOS BSD date
 mkdir -p ~/reviews/$YESTERDAY
 ```
 
-### 2. リポジトリ一覧
-
-下記 17 リポを並列で Subagent に投げる。`(repo, branch)` の組:
-
-- (overload-party-common, main)
-- (overload-party-client, main)
-- (overload-party-battle, main)
-- (overload-party-gateway, main)
-- (overload-party-account, main)
-- (overload-party-card, main)
-- (overload-party-matchmaking, main)
-- (overload-party-shop, develop)
-- (overload-party-scenario, main)
-- (overload-party-support, main)
-- (overload-party-infra, main)
-- (overload-party-k8s, main)
-- (overload-party-newsfeed, main)
-- (overload-party-news, main)
-- (overload-party-analytics, main)
-- (overload-party-ops, main)
-- (overload-party-assets, main)
-
 ### 3. Subagent への指示テンプレート
 
-各 Subagent には `general-purpose` を使い、次のプロンプトを渡す (テンプレート中の `{...}` は親が埋める):
+repos.yaml の各エントリ `(name, branch)` ごとに `general-purpose` Subagent を起動する。テンプレート中の `{...}` は親が埋める。`{REVIEW_CRITERIA_MD}` は Step 1 で組み立てた Markdown。
 
 ---
 
@@ -78,7 +64,7 @@ echo "$COMMITS"
 No changes since {YESTERDAY} 00:00 JST.
 ```
 
-そして親への返答は "No changes" とする。
+そして親への返答は "no_changes" ステータスとする。
 
 ### Step 2: 差分とリポ全体の取得
 
@@ -99,35 +85,7 @@ git -C "$WORKDIR" log --since="{YESTERDAY}T00:00:00+09:00" --pretty=format:'%h %
 
 下記すべての観点で評価する。1 つでも該当する指摘があれば Step 5 で Markdown に書き出す。すべて問題なければ "LGTM" とだけ書いて Step 5 をスキップして Step 6 へ。
 
-- 設計
-  - 設計通りに実装されているか (設計ドキュメント・既存設計と実装の整合性)
-  - 拡張性と保守性が高い設計であること
-  - 同じような処理を複数箇所に書いていないか
-  - 場当たり的なワークアラウンドで設計を汚していないか
-- バグ・セキュリティ
-  - バグのリスクがないか
-  - セキュリティリスクがないか
-- コード品質
-  - 使用していないコードがないか
-  - 未実装の TODO がないか
-- 構成・ドキュメント
-  - ディレクトリ構成が整理されているか
-  - ドキュメントとコードの乖離がないか
-- エラーハンドリング
-  - エラーハンドリングが適切か (エラーを握りつぶしていないか)
-- テスト
-  - テストコードは仕様に沿っているか
-  - テストコードのデータパターンが十分か
-  - テストを通すために設計を汚していないか
-  - 実装をなぞるだけのテストになっていないか (仕様ベースになっているか)
-- コメント
-  - 実装をなぞるだけのコメントがないか (Doc コメントは除く)
-  - 実装意図がわかりにくい箇所に意図を表すコメントがあるか
-- 責務分離
-  - ファイル・クラス・関数の責務が明確に分離されているか
-  - リポジトリ間の責務が明確に分離されているか
-- 共通化
-  - 通信用の文字列 (エンドポイント、イベント名、ヘッダ名、トピック名など) はリテラル直書きではなく共通パッケージの定数を使っているか
+{REVIEW_CRITERIA_MD}
 
 ### Step 5: 結果ファイルの書き出し
 
@@ -154,7 +112,7 @@ git -C "$WORKDIR" log --since="{YESTERDAY}T00:00:00+09:00" --pretty=format:'%h %
 
 ### Step 6: Issue 起票 (指摘ありの場合のみ)
 
-LGTM または "No changes" の場合は Issue を作らない。指摘がある場合のみ実行する。
+LGTM または "no_changes" の場合は Issue を作らない。指摘がある場合のみ実行する。
 
 ```bash
 TITLE_PREFIX="[自動レビュー {TODAY}] 差分"
@@ -189,7 +147,7 @@ fi
 
 ### 4. 並列ディスパッチ
 
-17 リポすべての Subagent を **1 メッセージ内で並列に呼び出す** こと。逐次実行すると数十分かかるので必ず並列化する。
+repos.yaml のリポすべての Subagent を **1 メッセージ内で並列に呼び出す** こと。逐次実行すると数十分かかるので必ず並列化する。
 
 ### 5. 集約
 
@@ -234,4 +192,4 @@ fi
 
 - 個別 Subagent が失敗しても他の Subagent は継続させる (1 リポの失敗で全体停止しない)
 - 失敗リポは index.md と返答に明示する。silent に欠落させない
-- 親自身が失敗した場合 (日付計算・ディレクトリ作成等) は即座にユーザーへ報告する
+- 親自身が失敗した場合 (設定読み込み・日付計算・ディレクトリ作成等) は即座にユーザーへ報告する
