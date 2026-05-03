@@ -1,6 +1,7 @@
 ---
-description: 全リポの前日 00:00 JST 以降の差分を Subagent で並列レビューし、~/reviews/{前日日付}/ に書き出して指摘があれば各リポに Issue 起票する
+description: 前日 00:00 JST 以降の差分を Subagent で並列レビューし、~/reviews/{前日日付}/ に書き出して指摘があれば各リポに Issue 起票する。引数でリポを絞り込み可能
 allowed-tools: Bash, Agent, Read, Write
+argument-hint: "[repo ...]"
 ---
 
 # /review-yesterday
@@ -8,23 +9,42 @@ allowed-tools: Bash, Agent, Read, Write
 前日 00:00 JST 以降の各リポジトリの差分を、リポ全体を読みながら並列でレビューする。
 詳細な背景・仕様は @auto-review/README.md を参照。
 
+## 引数
+
+`$ARGUMENTS` にスペース区切りでレビュー対象リポ名を渡せる。
+
+- 引数なし: @auto-review/repos.yaml の全リポを対象とする (本番運用)
+- 引数あり: 渡されたリポ名のみを対象とする (スモークテスト用途)
+
+例:
+
+```
+/review-yesterday                                  # 全リポ
+/review-yesterday overload-party-gateway           # gateway のみ
+/review-yesterday overload-party-gateway overload-party-battle  # 2 リポ
+```
+
 ## 全体方針
 
 - このコマンド (親) は **オーケストレーション専任**。レビュー本体は Subagent が実行する
 - 対象リポと観点は @auto-review/repos.yaml と @auto-review/review_criteria.yaml を SSoT とする
-- これらを Read してから、リポ数ぶんの `general-purpose` Subagent を **すべて並列で** 投げる (1 メッセージ内で複数 Agent 呼び出し)
+- これらを Read してから、対象リポ数ぶんの `general-purpose` Subagent を **すべて並列で** 投げる (1 メッセージ内で複数 Agent 呼び出し)
 - Subagent は各自で `gh repo clone` してリポ全体を Read/Grep/Glob で参照し、観点に沿ってレビューする
 - 結果は `~/reviews/{前日日付}/{repo}.md` に書き出す。指摘ありなら GitHub Issue も起票する
 - 全 Subagent 完了後、親が `~/reviews/{前日日付}/index.md` を集約生成してチャットに返す
 
 ## 手順
 
-### 1. 設定ファイルの読み込み
+### 1. 設定ファイルの読み込みと対象リポ決定
 
-- @auto-review/repos.yaml を Read してレビュー対象 `(name, branch)` のリストを取得
+- @auto-review/repos.yaml を Read してレビュー対象 `(name, branch)` の全リストを取得
 - @auto-review/review_criteria.yaml を Read して観点を取得し、Subagent プロンプトに差し込む Markdown を組み立てる
   - フォーマット: 各カテゴリを `## {name}` セクション、items を箇条書きにする
   - YAML 構造に異常 (categories キー欠落 / items が空) があれば、フォールバックせずユーザーに報告して終了する
+- `$ARGUMENTS` を空白で split して対象リポ名リストを得る
+  - 空なら repos.yaml の全リポを対象とする
+  - 非空なら repos.yaml に含まれるエントリのうち名前が一致するもののみを対象とする
+  - 引数で渡されたリポ名が repos.yaml に存在しない場合は、フォールバックせず該当不明リポ名をユーザーに報告して終了する (typo の silent skip 防止)
 
 ### 2. 日付計算と出力ディレクトリ作成
 
@@ -147,7 +167,7 @@ fi
 
 ### 4. 並列ディスパッチ
 
-repos.yaml のリポすべての Subagent を **1 メッセージ内で並列に呼び出す** こと。逐次実行すると数十分かかるので必ず並列化する。
+Step 1 で確定した対象リポすべての Subagent を **1 メッセージ内で並列に呼び出す** こと。逐次実行すると数十分かかるので必ず並列化する。
 
 ### 5. 集約
 
