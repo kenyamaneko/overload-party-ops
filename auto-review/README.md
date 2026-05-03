@@ -2,15 +2,7 @@
 
 各リポジトリの前日 00:00 JST 以降の差分を Claude Code のスラッシュコマンド `/review-yesterday` で並列レビューする自動コードレビューシステム。GitHub Issue 起票時のラベル名 (`auto-review`) と命名を揃えている。
 
-## 旧設計との違い
-
-| 項目 | 旧 (Cloud Run Job) | 新 (スラッシュコマンド) |
-|---|---|---|
-| 実行基盤 | Cloud Run Jobs (夜間 cron) | ローカル Claude Code (手動トリガ) |
-| API コスト | Anthropic API 直叩き ($30-40/月) | Max プランで実質無料 |
-| 入力範囲 | 差分テキストのみ | 差分 + リポジトリ全体 (clone して Read/Grep/Glob) |
-| 並列化 | リポジトリ逐次 | 17 リポを Subagent で並列 |
-| 起票先 | 各リポの GitHub Issue (`auto-review` ラベル) | 同左 + ローカル `~/reviews/{前日日付}/` に Markdown |
+設計判断・移管経緯は [overload-party-common ADR-030](../../overload-party-common/docs/adr/030-auto-review-migration-to-claude-code-slash-command.md) を参照。
 
 ## 使い方
 
