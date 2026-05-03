@@ -4,20 +4,38 @@
 
 ## 使い方
 
-Claude Code を任意のディレクトリで起動し、`/review-yesterday` を実行する。
+Claude Code を任意のディレクトリで起動し、`/review-yesterday` を実行する。引数でリポを絞り込めば一部リポのみ対象にできる (`overload-party-` プレフィックスは省略可)。
+
+```
+/review-yesterday                  # 全リポ
+/review-yesterday gateway          # overload-party-gateway のみ
+/review-yesterday gateway battle   # 2 リポ並列
+```
 
 実行時の動作:
 
-1. 当該日の `~/reviews/{前日日付}/` ディレクトリを作成
-2. [repos.yaml](repos.yaml) の 17 リポすべてに対して `general-purpose` Subagent を **並列**でディスパッチ
+1. 当該日の `~/workspace/key_and_notes/overload-party/review/{前日日付}/` ディレクトリを作成
+2. 対象リポ (引数指定なら指定分、なしなら [repos.yaml](repos.yaml) 全 17 リポ) に対して `general-purpose` Subagent を **並列**でディスパッチ
 3. 各 Subagent が以下を担当:
    - `gh repo clone` でローカルにチェックアウト
    - 前日 00:00 JST 以降の commit / 差分を `gh api` で取得
    - リポ全体を Read/Grep/Glob で参照しながら [review_criteria.yaml](review_criteria.yaml) の観点で評価
-   - 結果を `~/reviews/{前日日付}/{repo}.md` に書き出し
+   - 各指摘に重要度 (`critical` / `high` / `medium` / `low`) を付与
+   - 結果を `~/workspace/key_and_notes/overload-party/review/{前日日付}/{repo}.md` に書き出し
    - 指摘ありなら各リポに GitHub Issue を起票 (`auto-review` ラベル、同タイトル既存ならスキップ)
-4. 親エージェントが `~/reviews/{前日日付}/index.md` を集約生成
-5. チャットにサマリと Issue URL 一覧を返す
+4. 親エージェントが `~/workspace/key_and_notes/overload-party/review/{前日日付}/index.md` を集約生成 (重要度の高い順にソート)
+5. チャットにサマリ (重要度別件数を含む) と Issue URL 一覧を返す
+
+## 重要度
+
+| 重要度 | 適用基準 |
+|---|---|
+| `critical` | 本番影響リスクあり (バグ・セキュリティ脆弱性・データ破損・認証認可の穴) |
+| `high` | 設計違反・主要機能の不整合・dead code・エラー握りつぶし・テスト不足で再発リスクあり |
+| `medium` | 構成乱れ・docs と実装の乖離・命名の一貫性欠如・責務分離の改善余地 |
+| `low` | 軽微なコメント・スタイル・将来的な改善提案 |
+
+判断に迷う場合は **高い方** を選ぶ運用 (見落とし防止)。
 
 ## 設定ファイル
 

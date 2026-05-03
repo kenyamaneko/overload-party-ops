@@ -1,5 +1,5 @@
 ---
-description: 前日 00:00 JST 以降の差分を Subagent で並列レビューし、~/reviews/{前日日付}/ に書き出して指摘があれば各リポに Issue 起票する。引数でリポを絞り込み可能
+description: 前日 00:00 JST 以降の差分を Subagent で並列レビューし、~/workspace/key_and_notes/overload-party/review/{前日日付}/ に書き出して指摘があれば各リポに Issue 起票する。引数でリポを絞り込み可能
 allowed-tools: Bash, Agent, Read, Write
 argument-hint: "[repo ...]"
 ---
@@ -11,7 +11,7 @@ argument-hint: "[repo ...]"
 
 ## 引数
 
-`$ARGUMENTS` にスペース区切りでレビュー対象リポ名を渡せる。
+`$ARGUMENTS` にスペース区切りでレビュー対象リポ名を渡せる。`overload-party-` プレフィックスは省略可能。
 
 - 引数なし: @auto-review/repos.yaml の全リポを対象とする (本番運用)
 - 引数あり: 渡されたリポ名のみを対象とする (スモークテスト用途)
@@ -19,9 +19,10 @@ argument-hint: "[repo ...]"
 例:
 
 ```
-/review-yesterday                                  # 全リポ
-/review-yesterday overload-party-gateway           # gateway のみ
-/review-yesterday overload-party-gateway overload-party-battle  # 2 リポ
+/review-yesterday                          # 全リポ
+/review-yesterday gateway                  # overload-party-gateway のみ
+/review-yesterday gateway battle           # 2 リポ並列
+/review-yesterday overload-party-gateway   # フルネームでも可
 ```
 
 ## 全体方針
@@ -30,8 +31,21 @@ argument-hint: "[repo ...]"
 - 対象リポと観点は @auto-review/repos.yaml と @auto-review/review_criteria.yaml を SSoT とする
 - これらを Read してから、対象リポ数ぶんの `general-purpose` Subagent を **すべて並列で** 投げる (1 メッセージ内で複数 Agent 呼び出し)
 - Subagent は各自で `gh repo clone` してリポ全体を Read/Grep/Glob で参照し、観点に沿ってレビューする
-- 結果は `~/reviews/{前日日付}/{repo}.md` に書き出す。指摘ありなら GitHub Issue も起票する
-- 全 Subagent 完了後、親が `~/reviews/{前日日付}/index.md` を集約生成してチャットに返す
+- 結果は `~/workspace/key_and_notes/overload-party/review/{前日日付}/{repo}.md` に書き出す。指摘ありなら GitHub Issue も起票する
+- 全 Subagent 完了後、親が `index.md` を集約生成してチャットに返す
+
+## 重要度の定義
+
+各指摘には下記いずれかの重要度を必ず付ける。silent に省略しないこと。
+
+| 重要度 | 適用基準 |
+|---|---|
+| `critical` | 本番影響リスクあり (バグ・セキュリティ脆弱性・データ破損・認証認可の穴) |
+| `high` | 設計違反・主要機能の不整合・dead code・エラー握りつぶし・テスト不足で再発リスクあり |
+| `medium` | 構成乱れ・docs と実装の乖離・命名の一貫性欠如・責務分離の改善余地 |
+| `low` | 軽微なコメント・スタイル・将来的な改善提案 |
+
+判断に迷う場合は **高い方** を選ぶ (見落としを防ぐため)。
 
 ## 手順
 
@@ -43,8 +57,10 @@ argument-hint: "[repo ...]"
   - YAML 構造に異常 (categories キー欠落 / items が空) があれば、フォールバックせずユーザーに報告して終了する
 - `$ARGUMENTS` を空白で split して対象リポ名リストを得る
   - 空なら repos.yaml の全リポを対象とする
-  - 非空なら repos.yaml に含まれるエントリのうち名前が一致するもののみを対象とする
-  - 引数で渡されたリポ名が repos.yaml に存在しない場合は、フォールバックせず該当不明リポ名をユーザーに報告して終了する (typo の silent skip 防止)
+  - 非空なら下記の正規化を適用してから repos.yaml と突合する:
+    - 引数が `overload-party-` で始まらない場合、`overload-party-` を前置する (例: `gateway` → `overload-party-gateway`)
+    - 既に `overload-party-` で始まる場合はそのまま使う
+  - 正規化後の名前が repos.yaml に存在しない場合は、フォールバックせず該当不明リポ名 (正規化後) と利用可能なリポ一覧をユーザーに報告して終了する (typo の silent skip 防止)
 
 ### 2. 日付計算と出力ディレクトリ作成
 
@@ -53,12 +69,15 @@ JST で「前日」と「実行日」を計算する。前日日付がレビュ�
 ```bash
 TODAY=$(TZ=Asia/Tokyo date +%Y-%m-%d)
 YESTERDAY=$(TZ=Asia/Tokyo date -v-1d +%Y-%m-%d)  # macOS BSD date
-mkdir -p ~/reviews/$YESTERDAY
+OUTPUT_DIR=~/workspace/key_and_notes/overload-party/review/$YESTERDAY
+mkdir -p "$OUTPUT_DIR"
 ```
+
+以降のテンプレート中の `{OUTPUT_DIR}` は上記 `~/workspace/key_and_notes/overload-party/review/{YESTERDAY}` を指す。
 
 ### 3. Subagent への指示テンプレート
 
-repos.yaml の各エントリ `(name, branch)` ごとに `general-purpose` Subagent を起動する。テンプレート中の `{...}` は親が埋める。`{REVIEW_CRITERIA_MD}` は Step 1 で組み立てた Markdown。
+対象リポの各エントリ `(name, branch)` ごとに `general-purpose` Subagent を起動する。テンプレート中の `{...}` は親が埋める。`{REVIEW_CRITERIA_MD}` は Step 1 で組み立てた Markdown。
 
 ---
 
@@ -67,7 +86,7 @@ repos.yaml の各エントリ `(name, branch)` ごとに `general-purpose` Subag
 前日 {YESTERDAY} 00:00 JST 以降の差分をレビューしてください。
 
 ## 出力ファイル
-~/reviews/{YESTERDAY}/{repo}.md
+{OUTPUT_DIR}/{repo}.md
 
 ## 手順
 
@@ -78,7 +97,7 @@ COMMITS=$(gh api "repos/kenyamaneko/{repo}/commits?sha={branch}&since={YESTERDAY
 echo "$COMMITS"
 ```
 
-`$COMMITS` が 0 なら、レビュー不要。`~/reviews/{YESTERDAY}/{repo}.md` に下記だけ書いて Step 6 にスキップ:
+`$COMMITS` が 0 なら、レビュー不要。`{OUTPUT_DIR}/{repo}.md` に下記だけ書いて Step 6 にスキップ:
 
 ```
 No changes since {YESTERDAY} 00:00 JST.
@@ -109,7 +128,9 @@ git -C "$WORKDIR" log --since="{YESTERDAY}T00:00:00+09:00" --pretty=format:'%h %
 
 ### Step 5: 結果ファイルの書き出し
 
-`~/reviews/{YESTERDAY}/{repo}.md` に Markdown で書く。フォーマット:
+`{OUTPUT_DIR}/{repo}.md` に Markdown で書く。各指摘には重要度 `critical` / `high` / `medium` / `low` のいずれかを必ず付ける (定義は親プロンプトの「重要度の定義」セクションに従う)。判断に迷う場合は高い方を選ぶ。
+
+フォーマット:
 
 ```
 # {repo} 自動レビュー ({YESTERDAY} 以降)
@@ -118,14 +139,23 @@ git -C "$WORKDIR" log --since="{YESTERDAY}T00:00:00+09:00" --pretty=format:'%h %
 - {hash} {subject} ({author})
 - ...
 
+## 重要度別件数
+- critical: N
+- high: N
+- medium: N
+- low: N
+
 ## 指摘
 
 ### {観点カテゴリ名}
+- **重要度**: critical
 - **ファイル**: `path/to/file.go:123-145`
 - **指摘**: ...
 - **改善案**: ...
 
-### ...
+### {観点カテゴリ名}
+- **重要度**: high
+- ...
 ```
 
 指摘がない場合の本文は `LGTM` の一行のみとする (LGTM 判定のため後続処理が文字列マッチする)。
@@ -143,7 +173,7 @@ if [ "$EXISTING" = "0" ]; then
     --repo kenyamaneko/{repo} \
     --title "$TITLE_PREFIX {repo}" \
     --label auto-review \
-    --body-file ~/reviews/{YESTERDAY}/{repo}.md)
+    --body-file {OUTPUT_DIR}/{repo}.md)
   echo "$ISSUE_URL"
 else
   echo "skipped (existing issue)"
@@ -152,12 +182,12 @@ fi
 
 ### Step 7: 親への返答
 
-次の JSON 形式で 1 行返す。それ以外の冗長な文章は不要。
+次の JSON 形式で 1 行返す。それ以外の冗長な文章は不要。`severity_counts` は Step 5 で集計した重要度別件数を入れる。
 
 - 差分なし: `{"repo": "{repo}", "status": "no_changes"}`
 - LGTM: `{"repo": "{repo}", "status": "lgtm"}`
-- 指摘あり (Issue 起票成功): `{"repo": "{repo}", "status": "issues", "issue_url": "<URL>", "review_path": "~/reviews/{YESTERDAY}/{repo}.md"}`
-- 指摘あり (Issue 既存スキップ): `{"repo": "{repo}", "status": "issues", "issue_url": null, "skipped_existing": true, "review_path": "~/reviews/{YESTERDAY}/{repo}.md"}`
+- 指摘あり (Issue 起票成功): `{"repo": "{repo}", "status": "issues", "severity_counts": {"critical": N, "high": N, "medium": N, "low": N}, "issue_url": "<URL>", "review_path": "{OUTPUT_DIR}/{repo}.md"}`
+- 指摘あり (Issue 既存スキップ): `{"repo": "{repo}", "status": "issues", "severity_counts": {"critical": N, "high": N, "medium": N, "low": N}, "issue_url": null, "skipped_existing": true, "review_path": "{OUTPUT_DIR}/{repo}.md"}`
 - 失敗: `{"repo": "{repo}", "status": "error", "error": "<短い説明>"}`
 
 エラーは silent に握りつぶさず、必ず "error" ステータスで親に返すこと。
@@ -171,17 +201,25 @@ Step 1 で確定した対象リポすべての Subagent を **1 メッセージ�
 
 ### 5. 集約
 
-全 Subagent の返答 (JSON 1 行) を集計し、`~/reviews/{YESTERDAY}/index.md` を生成する。フォーマット:
+全 Subagent の返答 (JSON 1 行) を集計し、`{OUTPUT_DIR}/index.md` を生成する。指摘ありリポは **重要度の高い順** (critical → high → medium → low) でソートする (リポ内の最高重要度をソートキーにする)。
+
+フォーマット:
 
 ```markdown
 # 自動レビュー {TODAY} (対象範囲: {YESTERDAY} 以降)
 
+## 全体サマリ
+- critical: N 件 (X リポ)
+- high: N 件 (X リポ)
+- medium: N 件 (X リポ)
+- low: N 件 (X リポ)
+
 ## 指摘あり ({件数})
-- [{repo}](./{repo}.md) — Issue: {URL}
+- [{repo}](./{repo}.md) — critical:N high:N medium:N low:N — Issue: {URL}
 - ...
 
 ## 既存 Issue ありスキップ ({件数})
-- [{repo}](./{repo}.md)
+- [{repo}](./{repo}.md) — critical:N high:N medium:N low:N
 - ...
 
 ## LGTM ({件数})
@@ -202,9 +240,10 @@ Step 1 で確定した対象リポすべての Subagent を **1 メッセージ�
 チャットには下記を返す:
 
 1. 1 行サマリ: `指摘あり: N / LGTM: N / 差分なし: N / 失敗: N`
-2. 指摘ありリポと Issue URL の箇条書き
-3. 失敗リポとエラー概要 (あれば)
-4. index.md の絶対パス (`~/reviews/{YESTERDAY}/index.md`)
+2. 重要度別の合計件数: `critical: N / high: N / medium: N / low: N`
+3. 指摘ありリポと Issue URL の箇条書き (重要度の高い順)
+4. 失敗リポとエラー概要 (あれば)
+5. index.md の絶対パス (`{OUTPUT_DIR}/index.md`)
 
 冗長な進捗ログや内部状態は出力しない。
 
