@@ -1,10 +1,14 @@
 # Auto Review
 
-各リポジトリの前日 00:00 JST 以降の差分を Claude Code のスラッシュコマンド `/review-yesterday` で並列レビューする自動コードレビューシステム。GitHub Issue 起票時のラベル名 (`auto-review`) と命名を揃えている。
+各リポジトリの前日 03:00 JST 以降の差分を Claude Code のスラッシュコマンド `/review-yesterday` で並列レビューする自動コードレビューシステム。GitHub Issue 起票時のラベル名 (`auto-review`) と命名を揃えている。
+
+レビュー起点を厳密な「前日 00:00」ではなく「前日 03:00 JST」に固定しているのは、深夜 1〜2 時台に日付を跨いで作業することがあるため。前日朝 3:00 を起点にすることで、その日の作業セッション全体 (前日朝〜実行直前) を取り逃さない。
 
 ## 使い方
 
-Claude Code を任意のディレクトリで起動し、`/review-yesterday` を実行する。引数でリポを絞り込めば一部リポのみ対象にできる (`overload-party-` プレフィックスは省略可)。
+Claude Code を **overload-party-ops リポジトリ配下で** 起動し、`/review-yesterday` を実行する。対象が overload-party 配下のリポに固定されているため、他リポでの実行はコマンド冒頭の Step 0 ガード (auto-review/ 配下の設定ファイル存在チェック) でブロックされる。
+
+引数でリポを絞り込めば一部リポのみ対象にできる (`overload-party-` プレフィックスは省略可)。
 
 ```
 /review-yesterday                  # 全リポ
@@ -18,7 +22,7 @@ Claude Code を任意のディレクトリで起動し、`/review-yesterday` を
 2. 対象リポ (引数指定なら指定分、なしなら [repos.yaml](repos.yaml) 全 17 リポ) に対して `general-purpose` Subagent を **並列**でディスパッチ
 3. 各 Subagent が以下を担当:
    - `gh repo clone` でローカルにチェックアウト
-   - 前日 00:00 JST 以降の commit / 差分を `gh api` で取得
+   - 前日 03:00 JST 以降の commit / 差分を `gh api` で取得
    - リポ全体を Read/Grep/Glob で参照しながら [review_criteria.yaml](review_criteria.yaml) の観点で評価
    - 各指摘に重要度 (`critical` / `high` / `medium` / `low`) を付与
    - 結果を `~/workspace/key_and_notes/overload-party/review/{前日日付}/{repo}.md` に書き出し

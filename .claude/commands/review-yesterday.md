@@ -1,12 +1,13 @@
 ---
-description: 前日 00:00 JST 以降の差分を Subagent で並列レビューし、~/workspace/key_and_notes/overload-party/review/{前日日付}/ に書き出して指摘があれば各リポに Issue 起票する。引数でリポを絞り込み可能
+description: 前日 03:00 JST 以降の差分を Subagent で並列レビューし、~/workspace/key_and_notes/overload-party/review/{前日日付}/ に書き出して指摘があれば各リポに Issue 起票する。引数でリポを絞り込み可能
 allowed-tools: Bash, Agent, Read, Write
 argument-hint: "[repo ...]"
 ---
 
 # /review-yesterday
 
-前日 00:00 JST 以降の各リポジトリの差分を、リポ全体を読みながら並列でレビューする。
+前日 03:00 JST 以降の各リポジトリの差分を、リポ全体を読みながら並列でレビューする。
+日付跨ぎの作業 (深夜 1〜2 時台) を取り逃さないため、起点は厳密な「前日 00:00」ではなく「前日 03:00 JST」に固定している。
 詳細な背景・仕様は @auto-review/README.md を参照。
 
 ## 引数
@@ -49,6 +50,20 @@ argument-hint: "[repo ...]"
 
 ## 手順
 
+### 0. 実行コンテキストのガード
+
+このコマンドは overload-party-ops リポジトリ専用 (対象が overload-party 配下のリポに固定されているため)。誤って他リポで実行された場合は即座に中断する。
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -z "$REPO_ROOT" ] || [ ! -f "$REPO_ROOT/auto-review/repos.yaml" ] || [ ! -f "$REPO_ROOT/auto-review/review_criteria.yaml" ]; then
+  echo "ERROR: /review-yesterday は overload-party-ops リポジトリ配下でのみ実行可能です (auto-review/ 配下の設定ファイルが見つかりません)。" >&2
+  exit 1
+fi
+```
+
+設定ファイルが見つからない場合はフォールバックせず、上記エラーをユーザーに報告して終了する。
+
 ### 1. 設定ファイルの読み込みと対象リポ決定
 
 - @auto-review/repos.yaml を Read してレビュー対象 `(name, branch)` の全リストを取得
@@ -83,7 +98,7 @@ mkdir -p "$OUTPUT_DIR"
 
 ```
 あなたは {repo} (ブランチ: {branch}) の自動コードレビュアです。
-前日 {YESTERDAY} 00:00 JST 以降の差分をレビューしてください。
+{YESTERDAY} 03:00 JST 以降の差分をレビューしてください (深夜の日付跨ぎ作業を取り込むため、起点は前日 00:00 ではなく前日 03:00 に固定)。
 
 ## 出力ファイル
 {OUTPUT_DIR}/{repo}.md
@@ -93,14 +108,14 @@ mkdir -p "$OUTPUT_DIR"
 ### Step 1: 差分の有無確認
 
 ```bash
-COMMITS=$(gh api "repos/kenyamaneko/{repo}/commits?sha={branch}&since={YESTERDAY}T00:00:00%2B09:00" --jq 'length')
+COMMITS=$(gh api "repos/kenyamaneko/{repo}/commits?sha={branch}&since={YESTERDAY}T03:00:00%2B09:00" --jq 'length')
 echo "$COMMITS"
 ```
 
 `$COMMITS` が 0 なら、レビュー不要。`{OUTPUT_DIR}/{repo}.md` に下記だけ書いて Step 6 にスキップ:
 
 ```
-No changes since {YESTERDAY} 00:00 JST.
+No changes since {YESTERDAY} 03:00 JST.
 ```
 
 そして親への返答は "no_changes" ステータスとする。
@@ -111,7 +126,7 @@ No changes since {YESTERDAY} 00:00 JST.
 WORKDIR=/tmp/review-{repo}-{YESTERDAY}
 [ -d "$WORKDIR" ] || gh repo clone kenyamaneko/{repo} "$WORKDIR" -- --branch {branch}
 git -C "$WORKDIR" diff "{branch}~$COMMITS...{branch}" > "$WORKDIR/.review-diff.patch"
-git -C "$WORKDIR" log --since="{YESTERDAY}T00:00:00+09:00" --pretty=format:'%h %s (%an)' > "$WORKDIR/.review-commits.txt"
+git -C "$WORKDIR" log --since="{YESTERDAY}T03:00:00+09:00" --pretty=format:'%h %s (%an)' > "$WORKDIR/.review-commits.txt"
 ```
 
 ### Step 3: コンテキスト構築
@@ -133,7 +148,7 @@ git -C "$WORKDIR" log --since="{YESTERDAY}T00:00:00+09:00" --pretty=format:'%h %
 フォーマット:
 
 ```
-# {repo} 自動レビュー ({YESTERDAY} 以降)
+# {repo} 自動レビュー ({YESTERDAY} 03:00 JST 以降)
 
 ## 対象コミット
 - {hash} {subject} ({author})
@@ -206,7 +221,7 @@ Step 1 で確定した対象リポすべての Subagent を **1 メッセージ�
 フォーマット:
 
 ```markdown
-# 自動レビュー {TODAY} (対象範囲: {YESTERDAY} 以降)
+# 自動レビュー {TODAY} (対象範囲: {YESTERDAY} 03:00 JST 以降)
 
 ## 全体サマリ
 - critical: N 件 (X リポ)
