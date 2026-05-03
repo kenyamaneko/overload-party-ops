@@ -16,7 +16,7 @@ Overload Party の運用ジョブ・サービスをまとめたリポジトリ�
 
 | コマンド | 説明 |
 |---|---|
-| [/review-yesterday](review-yesterday/README.md) | 全リポジトリの前日差分を Subagent 並列レビュー → GitHub Issues 起票 |
+| [/review-yesterday](auto-review/README.md) | 全リポジトリの前日差分を Subagent 並列レビュー → GitHub Issues 起票 |
 
 ## CD パイプライン
 

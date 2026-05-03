@@ -1,6 +1,6 @@
-# Review Yesterday
+# Auto Review
 
-各リポジトリの前日 00:00 JST 以降の差分を Claude Code のスラッシュコマンド `/review-yesterday` で並列レビューするシステム。
+各リポジトリの前日 00:00 JST 以降の差分を Claude Code のスラッシュコマンド `/review-yesterday` で並列レビューする自動コードレビューシステム。GitHub Issue 起票時のラベル名 (`auto-review`) と命名を揃えている。
 
 ## 旧設計との違い
 
