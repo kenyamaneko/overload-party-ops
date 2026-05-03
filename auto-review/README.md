@@ -2,8 +2,6 @@
 
 各リポジトリの前日 00:00 JST 以降の差分を Claude Code のスラッシュコマンド `/review-yesterday` で並列レビューする自動コードレビューシステム。GitHub Issue 起票時のラベル名 (`auto-review`) と命名を揃えている。
 
-設計判断・移管経緯は [overload-party-common ADR-030](../../overload-party-common/docs/adr/030-auto-review-migration-to-claude-code-slash-command.md) を参照。
-
 ## 使い方
 
 Claude Code を任意のディレクトリで起動し、`/review-yesterday` を実行する。
