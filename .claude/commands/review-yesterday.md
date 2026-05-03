@@ -6,12 +6,12 @@ allowed-tools: Bash, Agent, Read, Write
 # /review-yesterday
 
 前日 00:00 JST 以降の各リポジトリの差分を、リポ全体を読みながら並列でレビューする。
-詳細な背景・仕様は @nightly-review/README.md を参照。
+詳細な背景・仕様は @review-yesterday/README.md を参照。
 
 ## 全体方針
 
 - このコマンド (親) は **オーケストレーション専任**。レビュー本体は Subagent が実行する
-- 対象リポと観点は @nightly-review/repos.yaml と @nightly-review/review_criteria.yaml を SSoT とする
+- 対象リポと観点は @review-yesterday/repos.yaml と @review-yesterday/review_criteria.yaml を SSoT とする
 - これらを Read してから、リポ数ぶんの `general-purpose` Subagent を **すべて並列で** 投げる (1 メッセージ内で複数 Agent 呼び出し)
 - Subagent は各自で `gh repo clone` してリポ全体を Read/Grep/Glob で参照し、観点に沿ってレビューする
 - 結果は `~/reviews/{前日日付}/{repo}.md` に書き出す。指摘ありなら GitHub Issue も起票する
@@ -21,8 +21,8 @@ allowed-tools: Bash, Agent, Read, Write
 
 ### 1. 設定ファイルの読み込み
 
-- @nightly-review/repos.yaml を Read してレビュー対象 `(name, branch)` のリストを取得
-- @nightly-review/review_criteria.yaml を Read して観点を取得し、Subagent プロンプトに差し込む Markdown を組み立てる
+- @review-yesterday/repos.yaml を Read してレビュー対象 `(name, branch)` のリストを取得
+- @review-yesterday/review_criteria.yaml を Read して観点を取得し、Subagent プロンプトに差し込む Markdown を組み立てる
   - フォーマット: 各カテゴリを `## {name}` セクション、items を箇条書きにする
   - YAML 構造に異常 (categories キー欠落 / items が空) があれば、フォールバックせずユーザーに報告して終了する
 

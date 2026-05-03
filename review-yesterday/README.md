@@ -1,6 +1,6 @@
-# Nightly Review
+# Review Yesterday
 
-各リポジトリの前日 00:00 JST 以降の差分を Claude Code のスラッシュコマンドで並列レビューするシステム。
+各リポジトリの前日 00:00 JST 以降の差分を Claude Code のスラッシュコマンド `/review-yesterday` で並列レビューするシステム。
 
 ## 旧設計との違い
 

@@ -106,8 +106,8 @@ class TestFormatCmdFailure:
     def test_both_empty_includes_exit_code(self):
         """観点: 両方空の場合は exit code だけでも残して原因追跡の手がかりを残す。
 
-        nightly-review 版と違いこちらは exit code を含める（呼び出し側でコードを
-        別途ログに出していないため）。
+        呼び出し側で exit code を別途ログに出していないため、メッセージに含めて
+        原因追跡の手がかりにする。
         """
         assert format_cmd_failure("", "", 127) == "exit code 127 (stderr/stdout ともに空)"
 
