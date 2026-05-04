@@ -104,10 +104,14 @@ class TestFormatCmdFailure:
         assert format_cmd_failure("err", "out", 1) == "stderr: err\nstdout: out"
 
     def test_both_empty_includes_exit_code(self):
-        """観点: 両方空の場合は exit code だけでも残して原因追跡の手がかりを残す。
+        """観点: stderr/stdout が両方空でも exit code を載せて原因追跡の手がかりを残す。
 
-        呼び出し側で exit code を別途ログに出していないため、メッセージに含めて
-        原因追跡の手がかりにする。
+        format_cmd_failure の戻り値は呼び出し側 (resources.py の _run_cmd /
+        setup_gke_credentials など) で Actions ログに print されるだけで、
+        exit code は別経路に流れない。両方空のときに exit code を含めないと、
+        ログには "[label] " とラベルしか残らず「コマンドが失敗した」事実すら
+        判別できなくなる。exit 127 (command not found) や exit 126
+        (permission denied) のような切り分け情報を最低限の手がかりとして残す。
         """
         assert format_cmd_failure("", "", 127) == "exit code 127 (stderr/stdout ともに空)"
 
