@@ -62,6 +62,6 @@ Slack の `/db-stop`・`/db-start` で Terraform 外から書き換えるため�
 | 種別 | 名前 | 用途 |
 |---|---|---|
 | Secret | `SLACK_WEBHOOK_URL` | Slack 通知用 Webhook URL |
-| Secret | `GH_PAT_NIGHTLY_REVIEW` | リポジトリ clone 用 Personal Access Token（`GITHUB_TOKEN` として注入） |
+| Secret | `INFRA_DRIFT_MONITOR_TOKEN` | drift-monitor 専用のリポジトリ clone 用 Personal Access Token（`GITHUB_TOKEN` として注入） |
 | Variable | `WIF_PROVIDER` | Workload Identity Federation プロバイダ |
 | Variable | `CI_SERVICE_ACCOUNT` | Google Cloud サービスアカウント |
