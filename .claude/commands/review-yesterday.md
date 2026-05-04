@@ -124,7 +124,15 @@ No changes since {YESTERDAY} 03:00 JST.
 
 ```bash
 WORKDIR=/tmp/review-{repo}-{YESTERDAY}
-[ -d "$WORKDIR" ] || gh repo clone kenyamaneko/{repo} "$WORKDIR" -- --branch {branch}
+if [ -d "$WORKDIR" ]; then
+  # 既存 clone は stale な可能性 (同日中の再実行で remote に新規 commit が積まれていると
+  # Step 1 の $COMMITS が remote 基準なのに HEAD は前回時点のまま乖離するため)。
+  # fetch + reset で remote の {branch} 先端に揃える。
+  git -C "$WORKDIR" fetch --quiet origin {branch}
+  git -C "$WORKDIR" reset --hard --quiet "origin/{branch}"
+else
+  gh repo clone kenyamaneko/{repo} "$WORKDIR" -- --branch {branch}
+fi
 git -C "$WORKDIR" diff "{branch}~$COMMITS...{branch}" > "$WORKDIR/.review-diff.patch"
 git -C "$WORKDIR" log --since="{YESTERDAY}T03:00:00+09:00" --pretty=format:'%h %s (%an)' > "$WORKDIR/.review-commits.txt"
 ```
@@ -183,7 +191,7 @@ LGTM または "no_changes" の場合は Issue を作らない。指摘がある
 TITLE_PREFIX="[自動レビュー {TODAY}] 差分"
 EXISTING=$(gh issue list --repo kenyamaneko/{repo} --search "in:title \"$TITLE_PREFIX\"" --state open --json number --jq 'length')
 if [ "$EXISTING" = "0" ]; then
-  gh label create auto-review --repo kenyamaneko/{repo} --color 0e8a16 --description "Nightly auto-review" 2>/dev/null || true
+  gh label create auto-review --repo kenyamaneko/{repo} --color 0e8a16 --description "Auto code review" 2>/dev/null || true
   ISSUE_URL=$(gh issue create \
     --repo kenyamaneko/{repo} \
     --title "$TITLE_PREFIX {repo}" \
