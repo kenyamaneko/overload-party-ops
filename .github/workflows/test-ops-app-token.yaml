@@ -1,0 +1,33 @@
+name: Test Ops Automation App Token
+
+# Ops Automation App (ADR-033 / issue #18) の動作確認用一時 workflow。
+# App ID + private key の組み合わせ・インストール範囲・permission が
+# 想定通りであることを確認したら本ファイルは削除する。
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.OPS_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.OPS_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: kenyamaneko
+
+      - name: Verify App identity and permissions
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          echo "=== App Identity ==="
+          gh api /app | jq '{name, slug, owner: .owner.login, permissions}'
+
+          echo ""
+          echo "=== Installation Repositories ==="
+          gh api /installation/repositories --jq '"total: \(.total_count)", (.repositories[].full_name)'
