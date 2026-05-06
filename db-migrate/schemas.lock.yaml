@@ -59,9 +59,3 @@ schemas:
     ref: main
     # scenario.scenario_episodes / scenario.episode_required_factions /
     # scenario.player_story_progress
-
-  - name: newsfeed
-    repo: kenyamaneko/overload-party-newsfeed
-    path: db/schema.sql
-    ref: main
-    # newsfeed.news_articles
