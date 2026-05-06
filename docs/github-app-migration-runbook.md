@@ -10,9 +10,9 @@
 
 | Workflow | 廃止する PAT | 移行先 App | 必要 permission |
 |---|---|---|---|
-| `.github/workflows/drift-monitor.yaml` | `INFRA_DRIFT_MONITOR_TOKEN` | Ops Automation App | Issues:Write + Contents:Read |
-| `.github/workflows/nightly-shutdown.yaml` | `K8S_DISPATCH` / `INFRA_DISPATCH` | Ops Automation App | Actions:Write |
-| `.github/workflows/db-migrate.yaml` | `DB_MIGRATE_TOKEN` | Common Read App | Contents:Read |
+| `.github/workflows/drift-monitor.yaml` | `INFRA_DRIFT_MONITOR_TOKEN` | `overload-party-ops-automation` | Issues:Write + Contents:Read |
+| `.github/workflows/nightly-shutdown.yaml` | `K8S_DISPATCH` / `INFRA_DISPATCH` | `overload-party-ops-automation` | Actions:Write |
+| `.github/workflows/db-migrate.yaml` | `DB_MIGRATE_TOKEN` | `overload-party-cross-repo-deps` | Contents:Read |
 
 ops リポ外の対応 (slack-commands Cloud Run の #12 や k8s リポの #7 PLATFORM_DISPATCH) は別 PR/別 runbook で扱う。本 runbook の完了時点では:
 
@@ -52,11 +52,11 @@ GitHub Organization オーナー権限の操作が必要 (App 作成と組織イ
 
 同じ App 設定画面下部の **Private keys** セクションで **Generate a private key** をクリック。`.pem` ファイルがダウンロードされる。後で secret に登録するためダウンロードファイルは保管 (登録後にローカルから削除)。
 
-### 1.4 組織内全リポにインストール
+### 1.4 overload-party-* + keyandnotes-platform にインストール
 
 1. 同設定画面の **Install App** タブを開く
 2. `@kenyamaneko` の **Install** をクリック
-3. **All repositories** を選択 (新規リポ追加時の手動オペを避けるため)
+3. **Only select repositories** を選択し、overload-party-* リポ全部 + keyandnotes-platform (PLATFORM_DISPATCH 用) を対象にする。無関係な個人リポ (pokelingual / shikacrush 等) は外す
 4. Install をクリック
 
 ## Phase 2: Common Read App を作成
@@ -70,7 +70,7 @@ GitHub Organization オーナー権限の操作が必要 (App 作成と組織イ
 
    | 項目 | 値 |
    |---|---|
-   | GitHub App name | `overload-party-go-modules` |
+   | GitHub App name | `overload-party-cross-repo-deps` |
    | Webhook | Active off |
    | Repository permissions / Contents | **Read-only** |
    | Repository permissions / Metadata | (自動で Read-only) |
@@ -78,9 +78,9 @@ GitHub Organization オーナー権限の操作が必要 (App 作成と組織イ
 
 3. Create
 
-### 2.2 App ID 控え + Private key 発行 + 全リポインストール
+### 2.2 App ID 控え + Private key 発行 + overload-party-* リポへインストール
 
-Phase 1.2〜1.4 と同手順。`vars.GO_MODULES_APP_ID` と `secrets.GO_MODULES_APP_PRIVATE_KEY` に対応する値を控える。
+Phase 1.2〜1.4 と同手順だが、インストール時は **Only select repositories** を選択し overload-party-* リポ全部 (個人の無関係リポは除外) を対象にする。`vars.CROSS_REPO_DEPS_APP_ID` と `secrets.CROSS_REPO_DEPS_APP_PRIVATE_KEY` に対応する値を控える。
 
 ## Phase 3: Secret / Variable 登録
 
@@ -95,14 +95,14 @@ ops リポの secret / variable に以下を登録する。
 | Name | Value |
 |---|---|
 | `OPS_AUTOMATION_APP_ID` | Phase 1.2 で控えた数値 |
-| `GO_MODULES_APP_ID` | Phase 2.2 で控えた数値 |
+| `CROSS_REPO_DEPS_APP_ID` | Phase 2.2 で控えた数値 |
 
 #### Repository secrets
 
 | Name | Value |
 |---|---|
 | `OPS_AUTOMATION_APP_PRIVATE_KEY` | Phase 1.3 でダウンロードした PEM ファイルの中身 (BEGIN〜END まで全文) |
-| `GO_MODULES_APP_PRIVATE_KEY` | Phase 2.2 でダウンロードした PEM ファイルの中身 |
+| `CROSS_REPO_DEPS_APP_PRIVATE_KEY` | Phase 2.2 でダウンロードした PEM ファイルの中身 |
 
 ### 3.2 既存の旧 PAT secret は **削除しない** (まだ)
 
@@ -220,23 +220,23 @@ dispatch 用 step が 2 つあるため、両方を App token に切り替える
 **変更後**:
 
 ```yaml
-      - name: Generate Go modules App token
-        id: go-modules-token
+      - name: Generate Cross-Repo Deps App token
+        id: cross-repo-deps-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ vars.GO_MODULES_APP_ID }}
-          private-key: ${{ secrets.GO_MODULES_APP_PRIVATE_KEY }}
+          app-id: ${{ vars.CROSS_REPO_DEPS_APP_ID }}
+          private-key: ${{ secrets.CROSS_REPO_DEPS_APP_PRIVATE_KEY }}
           owner: kenyamaneko
 
       - name: Build schema union (current HEAD of schemas.lock.yaml)
         env:
-          DB_MIGRATE_TOKEN: ${{ steps.go-modules-token.outputs.token }}
+          DB_MIGRATE_TOKEN: ${{ steps.cross-repo-deps-token.outputs.token }}
         run: |
           python3 db-migrate/fetch-schemas.py ...
 
       - name: Build previous schema union (for safety diff)
         env:
-          DB_MIGRATE_TOKEN: ${{ steps.go-modules-token.outputs.token }}
+          DB_MIGRATE_TOKEN: ${{ steps.cross-repo-deps-token.outputs.token }}
         run: .github/scripts/db-migrate/build-previous-schema-union.sh
 ```
 
@@ -254,6 +254,8 @@ PR-1 / PR-2 / PR-3 すべてのマージ後、各 workflow が **少なくとも
 - K8S_DISPATCH
 - INFRA_DISPATCH
 - DB_MIGRATE_TOKEN
+
+> 旧 PAT 自体 (個人 PAT) は Phase 6 で revoke する。本 phase は repo に貼られた secret 削除のみ。
 ```
 
 ## Phase 6: 個人 PAT を revoke
