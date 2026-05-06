@@ -1,9 +1,0 @@
-name = "slack-commands-proxy"
-main = "src/index.ts"
-compatibility_date = "2024-09-23"
-
-[vars]
-# Cloud Run サービスの URL。デプロイ後に実際の URL に置き換える。
-CLOUD_RUN_URL = "https://slack-commands-1017837997433.asia-northeast1.run.app"
-
-# SLACK_SIGNING_SECRET と DISPATCH_SECRET は `wrangler secret put` で設定する。

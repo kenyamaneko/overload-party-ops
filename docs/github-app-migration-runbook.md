@@ -14,7 +14,7 @@
 | `.github/workflows/nightly-shutdown.yaml` | `K8S_DISPATCH` / `INFRA_DISPATCH` | `overload-party-ops-automation` | Actions:Write |
 | `.github/workflows/db-migrate.yaml` | `DB_MIGRATE_TOKEN` | `overload-party-cross-repo-deps` | Contents:Read |
 
-ops リポ外の対応 (slack-commands Cloud Run の #12 や k8s リポの #7 PLATFORM_DISPATCH) は別 PR/別 runbook で扱う。本 runbook の完了時点では:
+k8s リポの #7 PLATFORM_DISPATCH は別 PR/別 runbook で扱う (#12 SLACK_COMMANDS は ADR-033 関連で機能廃止済みのため対象外)。本 runbook の完了時点では:
 
 - Ops Automation App と Common Read App の 2 つが組織にインストールされている
 - ops リポの 3 ワークフローが App token で動いている
@@ -281,7 +281,6 @@ revoke 後 24 時間 (or 適切な観測期間) は workflow を見て予期せ�
 
 本 runbook の完了後に残る作業 (別 issue / 別 runbook):
 
-- **ops#18 残**: slack-commands Cloud Run (`SLACK_COMMANDS`) の App 化 — Cloud Run service 内で installation token を取得する実装変更が必要
 - **k8s#16**: ArgoCD Image Updater (`ARGOCD_IMAGE_UPDATE`) の App 化
 - **common#34**: 6 サービスリポ (card / shop / account / scenario / gateway / matchmaking) の CI を Common Read App に切り替え
 - **common#34 e2e**: `overload-party-e2e/docker/docker-compose.yml` のローカル secret を App token CLI に置換
