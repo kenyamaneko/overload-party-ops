@@ -1,8 +1,10 @@
-name: Test Ops Automation App Token
+name: Test App Tokens (Ops Automation / Cross-Repo Deps)
 
-# Ops Automation App (ADR-033 / issue #18) の動作確認用一時 workflow。
-# App ID + private key の組み合わせ・インストール範囲・permission が
-# 想定通りであることを確認したら本ファイルは削除する。
+# ADR-033 / issue #18 で導入する 2 つの GitHub App
+# (overload-party-ops-automation / overload-party-cross-repo-deps) の
+# 動作確認用一時 workflow。両 App について App ID + private key の組み合わせ・
+# インストール範囲・取得 token 経由でのリポ可視範囲を確認する。
+# 両 App の検証完了後に本ファイルは削除する。
 
 on:
   workflow_dispatch:
@@ -10,10 +12,10 @@ on:
 permissions: {}
 
 jobs:
-  verify:
+  ops-automation:
     runs-on: ubuntu-latest
     steps:
-      - name: Generate App token
+      - name: Generate Ops Automation App token
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
@@ -21,13 +23,27 @@ jobs:
           private-key: ${{ secrets.OPS_AUTOMATION_APP_PRIVATE_KEY }}
           owner: kenyamaneko
 
-      - name: Verify App identity and permissions
+      - name: List installation repositories (Ops Automation)
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          echo "=== App Identity ==="
-          gh api /app | jq '{name, slug, owner: .owner.login, permissions}'
+          gh api /installation/repositories \
+            --jq '"total: \(.total_count)", (.repositories[].full_name)'
 
-          echo ""
-          echo "=== Installation Repositories ==="
-          gh api /installation/repositories --jq '"total: \(.total_count)", (.repositories[].full_name)'
+  cross-repo-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Cross-Repo Deps App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.CROSS_REPO_DEPS_APP_ID }}
+          private-key: ${{ secrets.CROSS_REPO_DEPS_APP_PRIVATE_KEY }}
+          owner: kenyamaneko
+
+      - name: List installation repositories (Cross-Repo Deps)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api /installation/repositories \
+            --jq '"total: \(.total_count)", (.repositories[].full_name)'
