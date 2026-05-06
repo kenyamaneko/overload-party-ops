@@ -72,9 +72,17 @@ jobs:
       - name: Install Python deps
         run: pip install pyyaml
 
+      - name: Generate Cross-Repo Deps App token
+        id: cross-repo-deps-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.CROSS_REPO_DEPS_APP_ID }}
+          private-key: ${{ secrets.CROSS_REPO_DEPS_APP_PRIVATE_KEY }}
+          owner: kenyamaneko
+
       - name: Build schema union (current HEAD of schemas.lock.yaml)
         env:
-          DB_MIGRATE_TOKEN: ${{ secrets.DB_MIGRATE_TOKEN }}
+          DB_MIGRATE_TOKEN: ${{ steps.cross-repo-deps-token.outputs.token }}
         run: |
           python3 db-migrate/fetch-schemas.py \
             --lock db-migrate/schemas.lock.yaml \
@@ -84,7 +92,7 @@ jobs:
 
       - name: Build previous schema union (for safety diff)
         env:
-          DB_MIGRATE_TOKEN: ${{ secrets.DB_MIGRATE_TOKEN }}
+          DB_MIGRATE_TOKEN: ${{ steps.cross-repo-deps-token.outputs.token }}
         run: .github/scripts/db-migrate/build-previous-schema-union.sh
 
       - name: Schema safety check
