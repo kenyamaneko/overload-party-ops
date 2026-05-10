@@ -22,12 +22,17 @@ on:
           - dev
           - stg
 
+concurrency:
+  group: nightly-shutdown-${{ github.workflow }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
   shutdown:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         env: ${{ github.event_name == 'schedule' && fromJson('["dev", "stg"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
