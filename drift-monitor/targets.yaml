@@ -20,8 +20,6 @@
       path: providers/google-cloud/ops
     - name: cloudflare
       path: providers/cloudflare
-    - name: cloudflare-workers
-      path: providers/cloudflare-workers
     - name: upstash/dev
       path: providers/upstash/env/dev
     - name: upstash/stg
