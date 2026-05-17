@@ -4,7 +4,7 @@
 
 ## 動作フロー
 
-1. `targets.yaml` で定義された各リポジトリを PAT を使って shallow clone
+1. `targets.yaml` で定義された各リポジトリを GitHub App (Ops Automation) の短命 token で shallow clone
 2. 環境ごとに `terraform init` + `terraform plan -out=... -detailed-exitcode` を実行
 3. exit code 2（差分あり）→ `terraform show -json` で構造化 JSON を取得
 4. `targets.yaml` の `suppress:` ルールに当てはまる属性差分だけを持つリソースは drift から除外
@@ -64,6 +64,10 @@ Slack の `/db-stop`・`/db-start` で Terraform 外から書き換えるため�
 | 種別 | 名前 | 用途 |
 |---|---|---|
 | Secret | `SLACK_WEBHOOK_URL` | Slack 通知用 Webhook URL |
-| Secret | `INFRA_DRIFT_MONITOR_TOKEN` | drift-monitor 専用のリポジトリ clone 用 Personal Access Token（`GITHUB_TOKEN` として注入） |
+| Variable | `OPS_AUTOMATION_APP_ID` | リポジトリ clone 用 GitHub App (Ops Automation) の App ID |
+| Secret | `OPS_AUTOMATION_APP_PRIVATE_KEY` | 同 App の秘密鍵。短命 token を発行し `GITHUB_TOKEN` として注入 |
 | Variable | `WIF_PROVIDER` | Workload Identity Federation プロバイダ |
 | Variable | `CI_SERVICE_ACCOUNT` | Google Cloud サービスアカウント |
+| Secret | `CLOUDFLARE_CDN_API_TOKEN` | Cloudflare 環境の plan 用 API トークン |
+| Variable | `UPSTASH_EMAIL` | Upstash 環境の plan 用アカウントメール |
+| Secret | `UPSTASH_API_KEY` | Upstash 環境の plan 用 API キー |
