@@ -9,7 +9,7 @@
 3. exit code 2（差分あり）→ `terraform show -json` で構造化 JSON を取得
 4. `targets.yaml` の `suppress:` ルールに当てはまる属性差分だけを持つリソースは drift から除外
 5. 除外後に残った差分を drift として報告、exit code 1（エラー）→ エラーとして報告
-6. drift またはエラーがあれば Slack に通知（全環境クリアまたは全差分が suppress で吸収されたなら通知しない）
+6. 実行結果を Slack に通知（drift / エラーがあればその内容、全環境クリアまたは全差分が suppress で吸収されたなら「差分なし」）
 
 サマリは変更対象リソースを最大 10 件まで載せ、超過分は集約行にまとめる。
 
@@ -51,9 +51,11 @@ Slack の `/db-stop`・`/db-start` で Terraform 外から書き換えるため�
 
 ## Slack 通知
 
-- drift 検出時: `:rotating_light: Terraform Drift — 差分を検出` + 対象ラベルとサマリ
-- plan エラー時: `:warning: Terraform Drift — plan 実行エラー` + エラー詳細
-- 全環境クリア: 通知なし
+毎朝必ず 1 通通知する（死活確認を兼ねるため、全環境クリアでも送る）。
+
+- drift 検出時: `:rotating_light: [ドリフト警告 {日付}] 差分を検出` + 対象ラベルとサマリ
+- plan エラー時: `:warning: [ドリフト確認 {日付}] plan 実行エラー` + エラー詳細
+- 全環境クリア: `:white_check_mark: [ドリフト確認 {日付}] 差分なし`
 
 メッセージは 3,900 文字を超えた場合に切り詰められる。
 

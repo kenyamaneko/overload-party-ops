@@ -591,10 +591,11 @@ class TestMainSuppression:
     prod では suppress なしで通知する、という設計を end-to-end で保証する。
     """
 
-    def test_dev_activation_policy_only_is_not_notified(self):
-        """観点: dev 相当（suppress 有り）で activation_policy 単独差分なら Slack 通知なし。
+    def test_dev_activation_policy_only_is_notified_as_clean(self):
+        """観点: dev 相当（suppress 有り）で activation_policy 単独差分は drift 扱いされず差分なし通知になる。
 
-        nightly-shutdown / /db-stop が起こす常態的 drift を毎朝通知しないための核心仕様。
+        nightly-shutdown / /db-stop が起こす常態的 drift を毎朝 drift として騒がないための核心仕様。
+        毎朝の死活通知は送るが、内容は「差分なし」になる。
         """
         plan_json = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
@@ -604,7 +605,10 @@ class TestMainSuppression:
             {"settings": [{"activation_policy": "NEVER"}]},
         ))
         result = _run_main_with_plan_result(2, plan_json, suppress=ACTIVATION_POLICY_SUPPRESS)
-        assert result["called"] is False
+        assert result["called"] is True
+        assert "差分なし" in result["message"]
+        assert "差分を検出" not in result["message"]
+        assert CLOUDSQL not in result["message"]
 
     def test_prod_activation_policy_is_notified(self):
         """観点: prod 相当（suppress 無し）で activation_policy 差分があれば Slack 通知される。
@@ -656,7 +660,8 @@ class TestMainSuppression:
         assert result["called"] is True
         assert "google_storage_bucket.a" in result["message"]
 
-    def test_no_drift_does_not_notify(self):
-        """観点: plan exit 0 (差分なし) なら suppress の有無に関係なく通知しない。"""
+    def test_no_drift_notifies_clean(self):
+        """観点: plan exit 0 (差分なし) なら毎朝の死活通知として差分なしを通知する。"""
         result = _run_main_with_plan_result(0, "", suppress=ACTIVATION_POLICY_SUPPRESS)
-        assert result["called"] is False
+        assert result["called"] is True
+        assert "差分なし" in result["message"]

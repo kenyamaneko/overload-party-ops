@@ -350,24 +350,24 @@ def main() -> None:
             print(f"DRIFT DETECTED{suppressed_note}:\n{summary}")
             drifts.append({"label": label, "summary": summary})
 
-    if not drifts and not errors:
-        print("\nAll clear — no drift detected.")
-        return
-
     lines: list[str] = []
     if drifts:
-        lines.append(f":rotating_light: *[Terraform Drift {today}] 差分を検出*")
+        lines.append(f":rotating_light: *[ドリフト警告 {today}] 差分を検出*")
         lines.append("")
         for d in drifts:
             lines.append(f"• *{d['label']}*\n{d['summary']}")
         lines.append("")
 
     if errors:
-        lines.append(f":warning: *[Terraform Drift {today}] plan 実行エラー*")
+        lines.append(f":warning: *[ドリフト確認 {today}] plan 実行エラー*")
         lines.append("")
         for e in errors:
             lines.append(f"• *{e['repo']}/{e['env']}*: {e['detail']}")
         lines.append("")
+
+    # 全環境クリアでも 1 通送り、通知の無音をジョブ停止と区別できるようにする
+    if not drifts and not errors:
+        lines.append(f":white_check_mark: *[ドリフト確認 {today}] 差分なし*")
 
     message = "\n".join(lines)
     print(f"\n{message}")
