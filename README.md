@@ -12,12 +12,6 @@ Overload Party の運用ジョブ・サービスをまとめたリポジトリ�
 | [drift-monitor](drift-monitor/README.md) | Terraform plan による drift 検出 → Slack 通知 | 毎日 7:00 JST (`0 22 * * *` UTC) |
 | [cost-monitor](cost-monitor/README.md) | dev/stg のコスト発生リソース検出 → Slack 通知 | 毎日 8:00 / 14:00 / 20:00 JST (`0 23,5,11 * * *` UTC) |
 
-## オンデマンド実行（Claude Code スラッシュコマンド）
-
-| コマンド | 説明 |
-|---|---|
-| [/review-yesterday](auto-review/README.md) | 全リポジトリの前日差分を Subagent 並列レビュー → GitHub Issues 起票 |
-
 ## CD パイプライン
 
 | 名前 | 説明 | トリガー |
