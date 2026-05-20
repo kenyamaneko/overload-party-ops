@@ -7,12 +7,12 @@ dev/stg 環境でコストが発生しているリソースを検出し、Slack 
 | リソース | 検出条件 | 参考コスト |
 |---|---|---|
 | Cloud SQL | state が `RUNNABLE` | $0.19/hr |
-| GKE Deployment (`gateway`, `battle`) | replicas > 0 | - |
+| GKE Node (env 専用 nodepool `keyandnotes-main-{env}`) | Node が 1 台以上稼働 | Node spec 依存 |
 | Ingress (`overload-party`) | LB IP が割り当て済み | ~$0.025/hr |
 | 予約済み外部 IP | status=RESERVED, addressType=EXTERNAL | ~$3.65/mo |
 | PSC forwarding rule | target が serviceAttachments | - |
 
-GKE 関連チェック（Deployment, Ingress）は共有クラスタ `keyandnotes-main`（`keyandnotes-platform` プロジェクト）に対して実行する。namespace が存在しない環境はスキップされる。
+GKE 関連チェックは共有クラスタ `keyandnotes-main`（`keyandnotes-platform` プロジェクト）に対して実行する。Node チェックは cluster-scoped なので namespace 不在でも実行する（清掃漏れ検知）。namespace-scoped な Ingress は namespace が存在しない環境ではスキップ。
 
 手動実行（`workflow_dispatch`）も可能。
 

@@ -15,7 +15,7 @@ from resources import (
     _is_not_found,
     _run_cmd,
     check_environment,
-    check_gke_deployments,
+    check_gke_nodes,
     check_ingress,
     check_psc,
     check_static_ips,
@@ -158,78 +158,39 @@ class TestActionsRunUrl:
             assert _actions_run_url() == "https://github.com/org/repo/actions/runs/1"
 
 
-class TestCheckGkeDeployments:
-    """GKE Deployment 稼働チェックの仕様。
+class TestCheckGkeNodes:
+    """env 専用 nodepool の Node 稼働チェックの仕様。
 
-    spec.replicas の「0」と「未設定」を区別するのが重要な仕様。
-    0 = スケールダウン済み（正常）、未設定 = API 応答異常（エラー）。
+    GKE Standard は Node 単位で時間課金される。Pod 数や Deployment の
+    spec.replicas は課金に直接影響しないため、消し忘れ検知は nodepool の
+    Node 数で行う仕様の固定。
     """
 
-    def _deployment_json(self, replicas: int | None) -> str:
-        spec = {}
-        if replicas is not None:
-            spec["replicas"] = replicas
-        return json.dumps({"spec": spec})
+    def _nodes_json(self, count: int) -> str:
+        return json.dumps({"items": [{"metadata": {"name": f"n{i}"}} for i in range(count)]})
 
-    def test_running_deployment_is_cost(self):
-        """観点: replicas > 0 は稼働中としてコスト警告に載る。"""
-        with patch("resources.kubectl_json", return_value=self._deployment_json(3)):
-            costs, errors = check_gke_deployments("dev")
-        # 7 個の Deployment が全部 3 レプリカとしてチェックされる
-        assert len(costs) == 7
-        assert "3 レプリカ稼働中" in costs[0]
+    def test_running_nodes_are_cost(self):
+        """観点: nodepool に Node が存在すればコスト警告に載る。"""
+        with patch("resources.kubectl_json", return_value=self._nodes_json(2)):
+            costs, errors = check_gke_nodes("dev")
+        assert len(costs) == 1
+        assert "2 台稼働中" in costs[0]
+        assert "keyandnotes-main-dev" in costs[0]
         assert errors == []
 
-    def test_zero_replicas_is_not_cost(self):
-        """観点: replicas == 0 は「スケールダウン済み」の正常状態、エラー扱いしない。"""
-        with patch("resources.kubectl_json", return_value=self._deployment_json(0)):
-            costs, errors = check_gke_deployments("dev")
+    def test_zero_nodes_is_not_cost(self):
+        """観点: Node 0 台 (shutdown 済) は正常状態、エラー扱いしない。"""
+        with patch("resources.kubectl_json", return_value=self._nodes_json(0)):
+            costs, errors = check_gke_nodes("dev")
         assert costs == []
         assert errors == []
-
-    def test_missing_replicas_field_is_error(self):
-        """観点: spec.replicas が欠けていれば silent に 0 扱いせずエラー。
-
-        API レスポンスフォーマット変更や権限不足で一部フィールドが返らない
-        ケースを「稼働なし」と誤判定させない仕様の固定。
-        """
-        with patch("resources.kubectl_json", return_value=self._deployment_json(None)):
-            costs, errors = check_gke_deployments("dev")
-        assert costs == []
-        assert len(errors) == 7
-        assert "spec.replicas" in errors[0]
-
-    def test_undeployed_is_normal_state_not_cost_not_error(self):
-        """観点: 未デプロイの Deployment は costs にも errors にも入れず、正常系として扱う。
-
-        kubectl NotFound（= 未デプロイ）は「コスト発生なし」を示す正常状態。
-        ただし silent skip せず「未デプロイ」であることは可視化する（別テストで固定）。
-        """
-        with patch("resources.kubectl_json", return_value=""):
-            costs, errors = check_gke_deployments("dev")
-        assert costs == []
-        assert errors == []
-
-    def test_undeployed_is_logged_explicitly(self, capsys):
-        """観点: 未デプロイは silent skip せず「未デプロイ」を Actions ログに明示する。
-
-        silent に抜けると namespace 内の Deployment 状態が不可視になり、
-        手動で環境確認する時の判断材料が失われる。正常系でも「何が無いか」を
-        残すのがこのジョブの役割。
-        """
-        with patch("resources.kubectl_json", return_value=""):
-            check_gke_deployments("dev")
-        captured = capsys.readouterr()
-        assert "未デプロイ" in captured.out
-        # どの Deployment が未デプロイかも識別できること
-        assert "gateway" in captured.out
 
     def test_malformed_json_is_error(self):
-        """観点: JSON パース失敗は errors に追加して次の Deployment へ進む。"""
+        """観点: JSON パース失敗は errors に追加する。"""
         with patch("resources.kubectl_json", return_value="not-json"):
-            costs, errors = check_gke_deployments("dev")
+            costs, errors = check_gke_nodes("dev")
         assert costs == []
-        assert len(errors) == 7
+        assert len(errors) == 1
         assert "JSON パース失敗" in errors[0]
 
 
@@ -357,13 +318,13 @@ class TestCheckEnvironment:
     @pytest.fixture(autouse=True)
     def _patches(self):
         with patch("resources.check_cloudsql", return_value=([], [])) as cloudsql, \
-             patch("resources.check_gke_deployments", return_value=([], [])) as deployments, \
+             patch("resources.check_gke_nodes", return_value=([], [])) as nodes, \
              patch("resources.check_ingress", return_value=([], [])) as ingress, \
              patch("resources.check_static_ips", return_value=([], [])) as static_ips, \
              patch("resources.check_psc", return_value=([], [])) as psc, \
              patch("resources.namespace_exists", return_value=(True, None)) as ns:
             self.cloudsql = cloudsql
-            self.deployments = deployments
+            self.nodes = nodes
             self.ingress = ingress
             self.static_ips = static_ips
             self.psc = psc
@@ -371,7 +332,7 @@ class TestCheckEnvironment:
             yield
 
     def test_gke_unavailable_skips_gke_checks(self):
-        """観点: GKE 認証に失敗していれば Deployment/Ingress チェックをスキップする。
+        """観点: GKE 認証に失敗していれば GKE 系チェックを全てスキップする。
 
         認証失敗時に GKE 系を叩くと全て失敗し、本質的に意味のない大量のエラーが
         Slack に並んでしまう。共通原因（認証失敗）は main で一度通知し、
@@ -383,18 +344,20 @@ class TestCheckEnvironment:
         self.psc.assert_called_once()
         # GKE 系は呼ばれない
         self.namespace_exists.assert_not_called()
-        self.deployments.assert_not_called()
+        self.nodes.assert_not_called()
         self.ingress.assert_not_called()
 
-    def test_missing_namespace_skips_gke_checks(self):
-        """観点: namespace が存在しなければ Deployment/Ingress チェックをスキップする。
+    def test_missing_namespace_still_checks_nodes(self):
+        """観点: namespace が無くても nodepool チェックは実行する。
 
-        環境が未構築（namespace 無し）と API 失敗の区別を残し、前者は正常系
-        として GKE チェックを飛ばして Cloud SQL / 静的 IP / PSC だけ見る。
+        nodepool は cluster-scoped で namespace 存在に依存しない。namespace 削除
+        済みでも nodepool が残っているケース (清掃漏れ) を検知するため、Node
+        チェックは ns_ok 分岐の外で必ず実行する仕様の固定。namespace-scoped な
+        Ingress はスキップする。
         """
         self.namespace_exists.return_value = (False, None)
         costs, errors = check_environment("dev", "proj")
-        self.deployments.assert_not_called()
+        self.nodes.assert_called_once()
         self.ingress.assert_not_called()
         # Cloud SQL / 静的 IP / PSC は呼ばれる
         self.cloudsql.assert_called_once()
@@ -410,15 +373,16 @@ class TestCheckEnvironment:
         self.namespace_exists.return_value = (False, "認証失敗 (詳細はログ)")
         costs, errors = check_environment("dev", "proj")
         assert "認証失敗 (詳細はログ)" in errors
-        # エラー時は Deployment/Ingress を呼ばない（二次障害を避ける）
-        self.deployments.assert_not_called()
+        # エラー時でも nodepool は cluster-scoped なので呼ぶ。Ingress は namespace
+        # 依存なのでスキップ。
+        self.nodes.assert_called_once()
         self.ingress.assert_not_called()
 
     def test_all_checks_run_when_namespace_exists(self):
         """観点: namespace がある正常ケースでは全チェックが実行される。"""
         check_environment("dev", "proj")
         self.cloudsql.assert_called_once()
-        self.deployments.assert_called_once()
+        self.nodes.assert_called_once()
         self.ingress.assert_called_once()
         self.static_ips.assert_called_once()
         self.psc.assert_called_once()
@@ -426,11 +390,11 @@ class TestCheckEnvironment:
     def test_costs_and_errors_are_merged(self):
         """観点: 各チェックの costs/errors が集約されて返る。"""
         self.cloudsql.return_value = (["Cloud SQL 稼働中"], [])
-        self.deployments.return_value = (["gateway 3 replicas"], ["card チェック失敗"])
+        self.nodes.return_value = (["Nodepool 2 台稼働中"], ["nodepool チェック失敗"])
         costs, errors = check_environment("dev", "proj")
         assert "Cloud SQL 稼働中" in costs
-        assert "gateway 3 replicas" in costs
-        assert "card チェック失敗" in errors
+        assert "Nodepool 2 台稼働中" in costs
+        assert "nodepool チェック失敗" in errors
 
 
 class TestRunCmd:
@@ -695,18 +659,14 @@ class TestCheckCommandErrorPaths:
         assert len(errors) == 1
         assert "PSC" in errors[0]
 
-    def test_check_gke_deployments_commanderror_accumulates_per_deploy(self):
-        """観点: 7 個の Deployment 全てで CommandError が起きると errors に 7 件並ぶ。
-
-        片方の except 節を消しても silent にならないよう、全件のエラー蓄積を固定。
-        """
+    def test_check_gke_nodes_commanderror_produces_readable_message(self):
+        """観点: nodepool 取得失敗が errors に readable で残る。"""
         with patch("resources.kubectl_json", side_effect=CommandError("kubectl 実行失敗 (exit 1)")):
-            costs, errors = check_gke_deployments("dev")
+            costs, errors = check_gke_nodes("dev")
         assert costs == []
-        assert len(errors) == 7
-        for e in errors:
-            assert "Deployment" in e
-            assert "チェック失敗" in e
+        assert len(errors) == 1
+        assert "Nodepool" in errors[0]
+        assert "チェック失敗" in errors[0]
 
 
 class TestBuildErrorHeader:

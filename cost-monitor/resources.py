@@ -7,7 +7,6 @@ GKE_ZONE = "asia-northeast1-a"
 GKE_PROJECT = "keyandnotes-platform"
 GKE_CLUSTER = "keyandnotes-main"
 CLOUDSQL_INSTANCE = "overload-party-db"
-DEPLOYMENTS = ["gateway", "battle", "account", "card", "matchmaking", "shop", "scenario"]
 
 # "リソースが存在しない" エラーのみ抑制するパターン。
 # 認証失敗 / quota / network 等はマッチさせず例外で落とす。
@@ -118,42 +117,32 @@ def check_cloudsql(project: str) -> tuple[list[str], list[str]]:
     return [], []
 
 
-def check_gke_deployments(env: str) -> tuple[list[str], list[str]]:
-    """GKE Deployment のレプリカ数を確認します。"""
-    costs: list[str] = []
-    errors: list[str] = []
-    for deploy in DEPLOYMENTS:
-        try:
-            raw = kubectl_json(
-                "get", "deployment", deploy,
-                "-n", env,
-                f"--context=gke_{GKE_PROJECT}_{GKE_ZONE}_{GKE_CLUSTER}",
-                allow_not_found=True,
-            )
-        except CommandError as e:
-            errors.append(f"Deployment `{deploy}` チェック失敗: {e}")
-            continue
-        if not raw:
-            # 未デプロイは正常系の一種（コスト発生なし）として扱うが、silent にせず
-            # Actions ログに「未デプロイ」を明示する。silent skip すると namespace
-            # 内の状態が不可視になり、手動で環境調査する時の判断材料が失われる。
-            print(f"  Deployment `{deploy}` は {env} namespace に未デプロイ")
-            continue
-        try:
-            spec = json.loads(raw)
-        except json.JSONDecodeError as e:
-            errors.append(f"Deployment `{deploy}` JSON パース失敗: {e}")
-            continue
-        # spec.replicas が「0」と「未設定」を区別する: 0 はスケールダウン済みで正常、
-        # 未設定は API レスポンス異常で稼働状態が判定できないためエラー扱い。
-        deployment_spec = spec.get("spec", {})
-        if "replicas" not in deployment_spec:
-            errors.append(f"Deployment `{deploy}` の spec.replicas フィールドが見つかりません")
-            continue
-        replicas = deployment_spec["replicas"]
-        if replicas > 0:
-            costs.append(f"Deployment `{deploy}` が {replicas} レプリカ稼働中")
-    return costs, errors
+def check_gke_nodes(env: str) -> tuple[list[str], list[str]]:
+    """env 専用 nodepool の Node 数を確認します。
+
+    Args:
+        env: 監視対象の環境名 (dev / stg)。nodepool 名は `{cluster}-{env}` 規約。
+
+    Returns:
+        (costs, errors): Node 1 台以上で costs に 1 件、API 失敗時は errors に 1 件。
+    """
+    nodepool = f"{GKE_CLUSTER}-{env}"
+    try:
+        raw = kubectl_json(
+            "get", "nodes",
+            "-l", f"cloud.google.com/gke-nodepool={nodepool}",
+            f"--context=gke_{GKE_PROJECT}_{GKE_ZONE}_{GKE_CLUSTER}",
+        )
+    except CommandError as e:
+        return [], [f"Nodepool `{nodepool}` チェック失敗: {e}"]
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return [], [f"Nodepool `{nodepool}` JSON パース失敗: {e}"]
+    items = result.get("items", [])
+    if not items:
+        return [], []
+    return [f"Nodepool `{nodepool}` に Node が {len(items)} 台稼働中"], []
 
 
 def check_ingress(env: str) -> tuple[list[str], list[str]]:
@@ -271,14 +260,17 @@ def check_environment(
 
     _collect(check_cloudsql(project))
     if gke_available:
+        # Nodepool は cluster-scoped で namespace 存在に依存しない。namespace が
+        # 削除済みでも nodepool が残っているケース (清掃漏れ = 消し忘れ) を
+        # 逃さないよう ns_ok 分岐の外で必ず実行する。
+        _collect(check_gke_nodes(env))
         ns_ok, ns_err = namespace_exists(env)
         if ns_err:
             errors.append(ns_err)
         if ns_ok:
-            _collect(check_gke_deployments(env))
             _collect(check_ingress(env))
         elif not ns_err:
-            print(f"Namespace '{env}' not found, skipping GKE checks.")
+            print(f"Namespace '{env}' not found, skipping namespace-scoped GKE checks.")
     else:
         print("GKE credentials unavailable, skipping GKE checks.")
     _collect(check_static_ips(project))
