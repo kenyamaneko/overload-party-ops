@@ -348,33 +348,21 @@ class TestCheckEnvironment:
         self.ingress.assert_not_called()
 
     def test_missing_namespace_still_checks_nodes(self):
-        """観点: namespace が無くても nodepool チェックは実行する。
-
-        nodepool は cluster-scoped で namespace 存在に依存しない。namespace 削除
-        済みでも nodepool が残っているケース (清掃漏れ) を検知するため、Node
-        チェックは ns_ok 分岐の外で必ず実行する仕様の固定。namespace-scoped な
-        Ingress はスキップする。
-        """
+        """観点: namespace が無くても nodepool チェックは実行する。"""
         self.namespace_exists.return_value = (False, None)
         costs, errors = check_environment("dev", "proj")
         self.nodes.assert_called_once()
         self.ingress.assert_not_called()
-        # Cloud SQL / 静的 IP / PSC は呼ばれる
         self.cloudsql.assert_called_once()
         self.static_ips.assert_called_once()
         self.psc.assert_called_once()
         assert errors == []
 
     def test_namespace_check_error_is_propagated(self):
-        """観点: namespace 確認が API 失敗した場合、errors に詳細が流れる。
-
-        認証失敗等の重大エラーを silent に「namespace 無し」扱いしないための仕様。
-        """
+        """観点: namespace 確認が API 失敗した場合、errors に詳細が流れる。"""
         self.namespace_exists.return_value = (False, "認証失敗 (詳細はログ)")
         costs, errors = check_environment("dev", "proj")
         assert "認証失敗 (詳細はログ)" in errors
-        # エラー時でも nodepool は cluster-scoped なので呼ぶ。Ingress は namespace
-        # 依存なのでスキップ。
         self.nodes.assert_called_once()
         self.ingress.assert_not_called()
 
