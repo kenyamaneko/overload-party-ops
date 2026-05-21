@@ -163,6 +163,37 @@ class TestParsePlanJsonSuppression:
         assert visible == []
         assert suppressed == []
 
+    def test_read_action_resources_are_ignored(self):
+        """観点: actions=["read"] (deferred data source read) は visible/suppressed いずれにも積まれない。
+
+        terraform は data source の plan 時 refresh が確定しないとき (依存する managed
+        resource が同 plan で変更予定 / 引数に unknown after apply が含まれる) に
+        ["read"] を発行する。トリガとなる managed resource の変更は同じ plan に必ず
+        併載されるため、["read"] を skip しても drift 信号は失われない。
+        """
+        plan = _plan_json(
+            _resource_change("data.google_sql_database_instance.target", "google_sql_database_instance", ["read"], None, None),
+        )
+        visible, suppressed = parse_plan_json(plan, [])
+        assert visible == []
+        assert suppressed == []
+
+    def test_read_action_does_not_mask_trigger_change(self):
+        """観点: ["read"] と同 plan のトリガ resource (例: google_project_service の update)
+        は visible に残り、drift として通知される。
+
+        ["read"] を skip するだけで、その引き金になっている managed resource の変更を
+        握りつぶさないことを保証する。
+        """
+        plan = _plan_json(
+            _resource_change("data.google_sql_database_instance.target", "google_sql_database_instance", ["read"], None, None),
+            _resource_change("module.psc_cloudsql.google_project_service.sqladmin", "google_project_service", ["update"], {"disable_on_destroy": True}, {"disable_on_destroy": False}),
+        )
+        visible, suppressed = parse_plan_json(plan, [])
+        assert len(visible) == 1
+        assert visible[0]["type"] == "google_project_service"
+        assert suppressed == []
+
     def test_suppressed_when_only_rule_matched_attribute_changed(self):
         """観点: dev の Cloud SQL で activation_policy だけ変わった update は suppressed へ。
 

@@ -180,7 +180,11 @@ def parse_plan_json(plan_json: str, suppress_rules: list[dict]) -> tuple[list[di
 
     for rc in resource_changes:
         actions = rc.get("change", {}).get("actions", [])
-        if not actions or actions == ["no-op"]:
+        # actions=["read"] は data source が plan で確定できず apply 時に再 read される
+        # ことを示す派生イベント。トリガとなった managed resource の変更が同じ plan に
+        # 必ず併載されるため、read 自体を drift として通知しない (terraform CLI の
+        # "Plan: X to add, Y to change, Z to destroy" カウントが read を含めないのと同じ)。
+        if not actions or actions == ["no-op"] or actions == ["read"]:
             continue
         if _is_resource_suppressed(rc, suppress_rules):
             suppressed.append(rc)
