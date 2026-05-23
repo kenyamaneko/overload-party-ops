@@ -7,7 +7,6 @@ GKE_ZONE = "asia-northeast1-a"
 GKE_PROJECT = "keyandnotes-platform"
 GKE_CLUSTER = "keyandnotes-main"
 CLOUDSQL_INSTANCE = "overload-party-db"
-DEPLOYMENTS = ["gateway", "battle", "account", "card", "matchmaking", "shop", "scenario"]
 
 # "リソースが存在しない" エラーのみ抑制するパターン。
 # 認証失敗 / quota / network 等はマッチさせず例外で落とす。
@@ -118,42 +117,44 @@ def check_cloudsql(project: str) -> tuple[list[str], list[str]]:
     return [], []
 
 
-def check_gke_deployments(env: str) -> tuple[list[str], list[str]]:
-    """GKE Deployment のレプリカ数を確認します。"""
-    costs: list[str] = []
-    errors: list[str] = []
-    for deploy in DEPLOYMENTS:
+def check_gke_nodepool(env: str) -> tuple[list[str], list[str]]:
+    """env 用 GKE node pool の現行ノード数を確認します。"""
+    nodepool = f"{GKE_CLUSTER}-{env}"
+    try:
+        raw = gcloud(
+            "container", "node-pools", "describe", nodepool,
+            "--cluster", GKE_CLUSTER, "--zone", GKE_ZONE, "--project", GKE_PROJECT,
+        )
+    except CommandError as e:
+        return [], [f"Node pool `{nodepool}` チェック失敗: {e}"]
+    try:
+        np = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return [], [f"Node pool `{nodepool}` JSON パース失敗: {e}"]
+    igs = np.get("instanceGroupUrls", [])
+    if not igs:
+        return [], [f"Node pool `{nodepool}` の instanceGroupUrls が空"]
+    total_target = 0
+    for url in igs:
+        ig_name = url.rsplit("/", 1)[-1]
         try:
-            raw = kubectl_json(
-                "get", "deployment", deploy,
-                "-n", env,
-                f"--context=gke_{GKE_PROJECT}_{GKE_ZONE}_{GKE_CLUSTER}",
-                allow_not_found=True,
+            ig_raw = gcloud(
+                "compute", "instance-groups", "managed", "describe", ig_name,
+                "--zone", GKE_ZONE, "--project", GKE_PROJECT,
             )
         except CommandError as e:
-            errors.append(f"Deployment `{deploy}` チェック失敗: {e}")
-            continue
-        if not raw:
-            # 未デプロイは正常系の一種（コスト発生なし）として扱うが、silent にせず
-            # Actions ログに「未デプロイ」を明示する。silent skip すると namespace
-            # 内の状態が不可視になり、手動で環境調査する時の判断材料が失われる。
-            print(f"  Deployment `{deploy}` は {env} namespace に未デプロイ")
-            continue
+            return [], [f"Instance group `{ig_name}` チェック失敗: {e}"]
         try:
-            spec = json.loads(raw)
+            ig = json.loads(ig_raw)
         except json.JSONDecodeError as e:
-            errors.append(f"Deployment `{deploy}` JSON パース失敗: {e}")
-            continue
-        # spec.replicas が「0」と「未設定」を区別する: 0 はスケールダウン済みで正常、
-        # 未設定は API レスポンス異常で稼働状態が判定できないためエラー扱い。
-        deployment_spec = spec.get("spec", {})
-        if "replicas" not in deployment_spec:
-            errors.append(f"Deployment `{deploy}` の spec.replicas フィールドが見つかりません")
-            continue
-        replicas = deployment_spec["replicas"]
-        if replicas > 0:
-            costs.append(f"Deployment `{deploy}` が {replicas} レプリカ稼働中")
-    return costs, errors
+            return [], [f"Instance group `{ig_name}` JSON パース失敗: {e}"]
+        target = ig.get("targetSize")
+        if target is None:
+            return [], [f"Instance group `{ig_name}` の targetSize が見つかりません"]
+        total_target += target
+    if total_target > 0:
+        return [f"GKE node pool `{nodepool}` が {total_target} ノード稼働中"], []
+    return [], []
 
 
 def check_ingress(env: str) -> tuple[list[str], list[str]]:
@@ -270,17 +271,17 @@ def check_environment(
         errors.extend(result[1])
 
     _collect(check_cloudsql(project))
+    _collect(check_gke_nodepool(env))
     if gke_available:
         ns_ok, ns_err = namespace_exists(env)
         if ns_err:
             errors.append(ns_err)
         if ns_ok:
-            _collect(check_gke_deployments(env))
             _collect(check_ingress(env))
         elif not ns_err:
-            print(f"Namespace '{env}' not found, skipping GKE checks.")
+            print(f"Namespace '{env}' not found, skipping Ingress check.")
     else:
-        print("GKE credentials unavailable, skipping GKE checks.")
+        print("GKE credentials unavailable, skipping Ingress check.")
     _collect(check_static_ips(project))
     _collect(check_psc(project))
     return costs, errors
