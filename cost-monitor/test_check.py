@@ -15,7 +15,7 @@ from resources import (
     _is_not_found,
     _run_cmd,
     check_environment,
-    check_gke_deployments,
+    check_gke_nodepool,
     check_ingress,
     check_psc,
     check_static_ips,
@@ -158,78 +158,109 @@ class TestActionsRunUrl:
             assert _actions_run_url() == "https://github.com/org/repo/actions/runs/1"
 
 
-class TestCheckGkeDeployments:
-    """GKE Deployment 稼働チェックの仕様。
+class TestCheckGkeNodepool:
+    """GKE node pool 稼働チェックの仕様。
 
-    spec.replicas の「0」と「未設定」を区別するのが重要な仕様。
-    0 = スケールダウン済み（正常）、未設定 = API 応答異常（エラー）。
+    実コストドライバである instance group manager の targetSize で稼働判定する。
+    nodepool resize 方式の shutdown 後も Deployment.spec.replicas は 0 にならないため
+    cost-monitor は Deployment ではなく nodepool を見る。
     """
 
-    def _deployment_json(self, replicas: int | None) -> str:
-        spec = {}
-        if replicas is not None:
-            spec["replicas"] = replicas
-        return json.dumps({"spec": spec})
+    def _nodepool_json(self, ig_urls: list[str] | None = None) -> str:
+        if ig_urls is None:
+            ig_urls = ["https://www.googleapis.com/compute/v1/projects/p/zones/z/instanceGroupManagers/ig-dev"]
+        return json.dumps({"instanceGroupUrls": ig_urls})
 
-    def test_running_deployment_is_cost(self):
-        """観点: replicas > 0 は稼働中としてコスト警告に載る。"""
-        with patch("resources.kubectl_json", return_value=self._deployment_json(3)):
-            costs, errors = check_gke_deployments("dev")
-        # 7 個の Deployment が全部 3 レプリカとしてチェックされる
-        assert len(costs) == 7
-        assert "3 レプリカ稼働中" in costs[0]
+    def _ig_json(self, target_size: int | None) -> str:
+        body: dict = {}
+        if target_size is not None:
+            body["targetSize"] = target_size
+        return json.dumps(body)
+
+    def test_target_size_positive_is_cost(self):
+        """観点: instance group の targetSize > 0 は稼働中としてコスト警告に載る。"""
+        with patch("resources.gcloud", side_effect=[self._nodepool_json(), self._ig_json(2)]):
+            costs, errors = check_gke_nodepool("dev")
+        assert len(costs) == 1
+        assert "keyandnotes-main-dev" in costs[0]
+        assert "2 ノード稼働中" in costs[0]
         assert errors == []
 
-    def test_zero_replicas_is_not_cost(self):
-        """観点: replicas == 0 は「スケールダウン済み」の正常状態、エラー扱いしない。"""
-        with patch("resources.kubectl_json", return_value=self._deployment_json(0)):
-            costs, errors = check_gke_deployments("dev")
+    def test_target_size_zero_is_not_cost(self):
+        """観点: targetSize == 0 は「スケールダウン済み」の正常状態、エラー扱いしない。"""
+        with patch("resources.gcloud", side_effect=[self._nodepool_json(), self._ig_json(0)]):
+            costs, errors = check_gke_nodepool("dev")
         assert costs == []
         assert errors == []
 
-    def test_missing_replicas_field_is_error(self):
-        """観点: spec.replicas が欠けていれば silent に 0 扱いせずエラー。
-
-        API レスポンスフォーマット変更や権限不足で一部フィールドが返らない
-        ケースを「稼働なし」と誤判定させない仕様の固定。
-        """
-        with patch("resources.kubectl_json", return_value=self._deployment_json(None)):
-            costs, errors = check_gke_deployments("dev")
-        assert costs == []
-        assert len(errors) == 7
-        assert "spec.replicas" in errors[0]
-
-    def test_undeployed_is_normal_state_not_cost_not_error(self):
-        """観点: 未デプロイの Deployment は costs にも errors にも入れず、正常系として扱う。
-
-        kubectl NotFound（= 未デプロイ）は「コスト発生なし」を示す正常状態。
-        ただし silent skip せず「未デプロイ」であることは可視化する（別テストで固定）。
-        """
-        with patch("resources.kubectl_json", return_value=""):
-            costs, errors = check_gke_deployments("dev")
+    def test_nodepool_not_found_returns_empty(self):
+        """観点: nodepool が未作成 (環境未構築) は正常系としてスキップ。"""
+        with patch("resources.gcloud", return_value=""):
+            costs, errors = check_gke_nodepool("dev")
         assert costs == []
         assert errors == []
 
-    def test_undeployed_is_logged_explicitly(self, capsys):
-        """観点: 未デプロイは silent skip せず「未デプロイ」を Actions ログに明示する。
+    def test_missing_instance_group_urls_is_error(self):
+        """観点: nodepool は存在するが instanceGroupUrls が空なら API 仕様変更等の異常としてエラー。
 
-        silent に抜けると namespace 内の Deployment 状態が不可視になり、
-        手動で環境確認する時の判断材料が失われる。正常系でも「何が無いか」を
-        残すのがこのジョブの役割。
+        silent に「稼働なし」扱いすると nodepool 構成変更で監視が機能しなくなったことに
+        気付けない。
         """
-        with patch("resources.kubectl_json", return_value=""):
-            check_gke_deployments("dev")
-        captured = capsys.readouterr()
-        assert "未デプロイ" in captured.out
-        # どの Deployment が未デプロイかも識別できること
-        assert "gateway" in captured.out
+        with patch("resources.gcloud", return_value=json.dumps({"instanceGroupUrls": []})):
+            costs, errors = check_gke_nodepool("dev")
+        assert costs == []
+        assert len(errors) == 1
+        assert "instanceGroupUrls" in errors[0]
+
+    def test_missing_target_size_field_is_error(self):
+        """観点: instance group の targetSize が欠けていれば silent に 0 扱いせずエラー。
+
+        API レスポンスフォーマット変更や権限不足で一部フィールドが返らないケースを
+        「稼働なし」と誤判定させない仕様の固定。
+        """
+        with patch("resources.gcloud", side_effect=[self._nodepool_json(), self._ig_json(None)]):
+            costs, errors = check_gke_nodepool("dev")
+        assert costs == []
+        assert len(errors) == 1
+        assert "targetSize" in errors[0]
+
+    def test_instance_group_not_found_is_error(self):
+        """観点: nodepool が IG URL を返したのに IG が見つからないのは整合性異常としてエラー。"""
+        with patch("resources.gcloud", side_effect=[self._nodepool_json(), ""]):
+            costs, errors = check_gke_nodepool("dev")
+        assert costs == []
+        assert len(errors) == 1
+        assert "見つかりません" in errors[0]
+
+    def test_multiple_instance_groups_are_summed(self):
+        """観点: 複数 IG (multi-zone nodepool 等) の targetSize を合算してコスト判定する。"""
+        urls = [
+            "https://x/instanceGroupManagers/ig-a",
+            "https://x/instanceGroupManagers/ig-b",
+        ]
+        with patch("resources.gcloud", side_effect=[
+            self._nodepool_json(urls), self._ig_json(1), self._ig_json(2),
+        ]):
+            costs, errors = check_gke_nodepool("dev")
+        assert len(costs) == 1
+        assert "3 ノード稼働中" in costs[0]
+        assert errors == []
+
+    def test_nodepool_command_error_is_reported(self):
+        """観点: nodepool describe の CommandError は errors に意味あるメッセージで載る。"""
+        with patch("resources.gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
+            costs, errors = check_gke_nodepool("dev")
+        assert costs == []
+        assert len(errors) == 1
+        assert "Node pool" in errors[0]
+        assert "keyandnotes-main-dev" in errors[0]
 
     def test_malformed_json_is_error(self):
-        """観点: JSON パース失敗は errors に追加して次の Deployment へ進む。"""
-        with patch("resources.kubectl_json", return_value="not-json"):
-            costs, errors = check_gke_deployments("dev")
+        """観点: JSON パース失敗は errors に追加し、稼働中として誤検知しない。"""
+        with patch("resources.gcloud", return_value="not-json"):
+            costs, errors = check_gke_nodepool("dev")
         assert costs == []
-        assert len(errors) == 7
+        assert len(errors) == 1
         assert "JSON パース失敗" in errors[0]
 
 
@@ -357,47 +388,47 @@ class TestCheckEnvironment:
     @pytest.fixture(autouse=True)
     def _patches(self):
         with patch("resources.check_cloudsql", return_value=([], [])) as cloudsql, \
-             patch("resources.check_gke_deployments", return_value=([], [])) as deployments, \
+             patch("resources.check_gke_nodepool", return_value=([], [])) as nodepool, \
              patch("resources.check_ingress", return_value=([], [])) as ingress, \
              patch("resources.check_static_ips", return_value=([], [])) as static_ips, \
              patch("resources.check_psc", return_value=([], [])) as psc, \
              patch("resources.namespace_exists", return_value=(True, None)) as ns:
             self.cloudsql = cloudsql
-            self.deployments = deployments
+            self.nodepool = nodepool
             self.ingress = ingress
             self.static_ips = static_ips
             self.psc = psc
             self.namespace_exists = ns
             yield
 
-    def test_gke_unavailable_skips_gke_checks(self):
-        """観点: GKE 認証に失敗していれば Deployment/Ingress チェックをスキップする。
+    def test_gke_unavailable_skips_only_kubectl_checks(self):
+        """観点: GKE 認証 (kubectl) 失敗時は kubectl 依存の Ingress のみスキップする。
 
-        認証失敗時に GKE 系を叩くと全て失敗し、本質的に意味のない大量のエラーが
-        Slack に並んでしまう。共通原因（認証失敗）は main で一度通知し、
-        個別チェックはスキップするのが仕様。
+        認証失敗時に kubectl 系を叩くと全て失敗し、意味のない大量のエラーが Slack に
+        並んでしまう。共通原因 (認証失敗) は main で一度通知し、kubectl 系のみ
+        スキップ。nodepool チェックは gcloud API 直叩きで kubectl 認証に依存しない
+        ため独立に実行される。
         """
         check_environment("dev", "proj", gke_available=False)
         self.cloudsql.assert_called_once()
+        self.nodepool.assert_called_once()
         self.static_ips.assert_called_once()
         self.psc.assert_called_once()
-        # GKE 系は呼ばれない
+        # kubectl 系のみスキップ
         self.namespace_exists.assert_not_called()
-        self.deployments.assert_not_called()
         self.ingress.assert_not_called()
 
-    def test_missing_namespace_skips_gke_checks(self):
-        """観点: namespace が存在しなければ Deployment/Ingress チェックをスキップする。
+    def test_missing_namespace_skips_ingress_check(self):
+        """観点: namespace が存在しなければ kubectl 依存の Ingress のみスキップする。
 
-        環境が未構築（namespace 無し）と API 失敗の区別を残し、前者は正常系
-        として GKE チェックを飛ばして Cloud SQL / 静的 IP / PSC だけ見る。
+        nodepool は namespace に依存しないので独立に呼ばれる。
         """
         self.namespace_exists.return_value = (False, None)
         costs, errors = check_environment("dev", "proj")
-        self.deployments.assert_not_called()
         self.ingress.assert_not_called()
-        # Cloud SQL / 静的 IP / PSC は呼ばれる
+        # namespace 非依存のチェックは全て呼ばれる
         self.cloudsql.assert_called_once()
+        self.nodepool.assert_called_once()
         self.static_ips.assert_called_once()
         self.psc.assert_called_once()
         assert errors == []
@@ -410,15 +441,14 @@ class TestCheckEnvironment:
         self.namespace_exists.return_value = (False, "認証失敗 (詳細はログ)")
         costs, errors = check_environment("dev", "proj")
         assert "認証失敗 (詳細はログ)" in errors
-        # エラー時は Deployment/Ingress を呼ばない（二次障害を避ける）
-        self.deployments.assert_not_called()
+        # エラー時は kubectl 依存の Ingress を呼ばない (二次障害を避ける)
         self.ingress.assert_not_called()
 
     def test_all_checks_run_when_namespace_exists(self):
         """観点: namespace がある正常ケースでは全チェックが実行される。"""
         check_environment("dev", "proj")
         self.cloudsql.assert_called_once()
-        self.deployments.assert_called_once()
+        self.nodepool.assert_called_once()
         self.ingress.assert_called_once()
         self.static_ips.assert_called_once()
         self.psc.assert_called_once()
@@ -426,11 +456,11 @@ class TestCheckEnvironment:
     def test_costs_and_errors_are_merged(self):
         """観点: 各チェックの costs/errors が集約されて返る。"""
         self.cloudsql.return_value = (["Cloud SQL 稼働中"], [])
-        self.deployments.return_value = (["gateway 3 replicas"], ["card チェック失敗"])
+        self.nodepool.return_value = (["nodepool 2 ノード"], ["IG チェック失敗"])
         costs, errors = check_environment("dev", "proj")
         assert "Cloud SQL 稼働中" in costs
-        assert "gateway 3 replicas" in costs
-        assert "card チェック失敗" in errors
+        assert "nodepool 2 ノード" in costs
+        assert "IG チェック失敗" in errors
 
 
 class TestRunCmd:
@@ -695,18 +725,14 @@ class TestCheckCommandErrorPaths:
         assert len(errors) == 1
         assert "PSC" in errors[0]
 
-    def test_check_gke_deployments_commanderror_accumulates_per_deploy(self):
-        """観点: 7 個の Deployment 全てで CommandError が起きると errors に 7 件並ぶ。
-
-        片方の except 節を消しても silent にならないよう、全件のエラー蓄積を固定。
-        """
-        with patch("resources.kubectl_json", side_effect=CommandError("kubectl 実行失敗 (exit 1)")):
-            costs, errors = check_gke_deployments("dev")
+    def test_check_gke_nodepool_commanderror_produces_readable_message(self):
+        """観点: nodepool describe の CommandError が Slack 向けに意味あるメッセージで載る。"""
+        with patch("resources.gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
+            costs, errors = check_gke_nodepool("dev")
         assert costs == []
-        assert len(errors) == 7
-        for e in errors:
-            assert "Deployment" in e
-            assert "チェック失敗" in e
+        assert len(errors) == 1
+        assert "Node pool" in errors[0]
+        assert "gcloud" in errors[0]
 
 
 class TestBuildErrorHeader:
