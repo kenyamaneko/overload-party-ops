@@ -1,0 +1,75 @@
+name: Validate Cross-Repo Seeds
+
+on:
+  schedule:
+    # 18:00 UTC = 03:00 JST 翌日
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.vscode/**'
+      - '.gitignore'
+      - 'LICENSE'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.vscode/**'
+      - '.gitignore'
+      - 'LICENSE'
+
+concurrency:
+  group: validate-cross-repo-seeds-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    name: Validate shop/card seed cross-refs
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 10
+    steps:
+      - name: Checkout ops
+        uses: actions/checkout@v4
+        with:
+          path: ops
+      - name: Generate Cross-Repo Deps App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.CROSS_REPO_DEPS_APP_ID }}
+          private-key: ${{ secrets.CROSS_REPO_DEPS_APP_PRIVATE_KEY }}
+          owner: kenyamaneko
+      - name: Checkout shop main
+        uses: actions/checkout@v4
+        with:
+          repository: kenyamaneko/overload-party-shop
+          ref: main
+          path: shop
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Checkout card main
+        uses: actions/checkout@v4
+        with:
+          repository: kenyamaneko/overload-party-card
+          ref: main
+          path: card
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pyyaml
+        run: pip install pyyaml
+      - name: Run validation
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python3 ops/cross-repo-seeds/check.py \
+            --shop-yaml shop/data/products.yaml \
+            --card-yaml card/data/card_packs.yaml
