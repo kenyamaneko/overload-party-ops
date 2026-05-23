@@ -193,12 +193,18 @@ class TestCheckGkeNodepool:
         assert costs == []
         assert errors == []
 
-    def test_nodepool_not_found_returns_empty(self):
-        """観点: nodepool が未作成 (環境未構築) は正常系としてスキップ。"""
-        with patch("resources.gcloud", return_value=""):
+    def test_nodepool_not_found_is_error(self):
+        """観点: 監視対象 env の nodepool が見つからないのは構成 drift として errors に流す。
+
+        environments.yaml に env を追加した時点で対応する nodepool が存在することは
+        前提。見つからないなら設定の不整合か削除事故であり silent skip しない。
+        """
+        with patch("resources.gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_gke_nodepool("dev")
         assert costs == []
-        assert errors == []
+        assert len(errors) == 1
+        assert "Node pool" in errors[0]
+        assert "keyandnotes-main-dev" in errors[0]
 
     def test_missing_instance_group_urls_is_error(self):
         """観点: nodepool は存在するが instanceGroupUrls が空なら API 仕様変更等の異常としてエラー。
@@ -224,13 +230,15 @@ class TestCheckGkeNodepool:
         assert len(errors) == 1
         assert "targetSize" in errors[0]
 
-    def test_instance_group_not_found_is_error(self):
-        """観点: nodepool が IG URL を返したのに IG が見つからないのは整合性異常としてエラー。"""
-        with patch("resources.gcloud", side_effect=[self._nodepool_json(), ""]):
+    def test_instance_group_describe_failure_is_error(self):
+        """観点: nodepool が参照する IG describe が失敗したら errors に流す (silent skip しない)。"""
+        with patch("resources.gcloud", side_effect=[
+            self._nodepool_json(), CommandError("gcloud 実行失敗 (exit 1)"),
+        ]):
             costs, errors = check_gke_nodepool("dev")
         assert costs == []
         assert len(errors) == 1
-        assert "見つかりません" in errors[0]
+        assert "Instance group" in errors[0]
 
     def test_multiple_instance_groups_are_summed(self):
         """観点: 複数 IG (multi-zone nodepool 等) の targetSize を合算してコスト判定する。"""

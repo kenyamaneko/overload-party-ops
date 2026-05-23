@@ -119,20 +119,14 @@ def check_cloudsql(project: str) -> tuple[list[str], list[str]]:
 
 def check_gke_nodepool(env: str) -> tuple[list[str], list[str]]:
     """env 用 GKE node pool の現行ノード数を確認します。"""
-    # env-lifecycle.yaml の shutdown は node-pool-scale で nodepool を 0 化するため
-    # Deployment.spec.replicas は 0 にならない。コストドライバ本体である instance
-    # group manager の targetSize で判定する。
     nodepool = f"{GKE_CLUSTER}-{env}"
     try:
         raw = gcloud(
             "container", "node-pools", "describe", nodepool,
             "--cluster", GKE_CLUSTER, "--zone", GKE_ZONE, "--project", GKE_PROJECT,
-            allow_not_found=True,
         )
     except CommandError as e:
         return [], [f"Node pool `{nodepool}` チェック失敗: {e}"]
-    if not raw:
-        return [], []
     try:
         np = json.loads(raw)
     except json.JSONDecodeError as e:
@@ -147,12 +141,9 @@ def check_gke_nodepool(env: str) -> tuple[list[str], list[str]]:
             ig_raw = gcloud(
                 "compute", "instance-groups", "managed", "describe", ig_name,
                 "--zone", GKE_ZONE, "--project", GKE_PROJECT,
-                allow_not_found=True,
             )
         except CommandError as e:
             return [], [f"Instance group `{ig_name}` チェック失敗: {e}"]
-        if not ig_raw:
-            return [], [f"Instance group `{ig_name}` が見つかりません"]
         try:
             ig = json.loads(ig_raw)
         except json.JSONDecodeError as e:
