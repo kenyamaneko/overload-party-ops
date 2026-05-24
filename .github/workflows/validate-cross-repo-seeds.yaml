@@ -62,6 +62,6 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
-          python3 ops/cross-repo-seeds/validate_seed_refs.py \
+          python3 ops/cross-repo-seeds/validate_card_pack_refs.py \
             --shop-yaml shop/data/products.yaml \
             --card-yaml card/data/card_packs.yaml

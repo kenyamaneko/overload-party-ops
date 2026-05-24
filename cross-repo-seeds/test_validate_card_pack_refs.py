@@ -1,4 +1,4 @@
-"""cross-repo-seeds/validate_seed_refs.py のユニットテスト."""
+"""cross-repo-seeds/validate_card_pack_refs.py のユニットテスト."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-import validate_seed_refs as v
+import validate_card_pack_refs as v
 
 
 def _write_yaml(path: Path, data: dict) -> None:
@@ -127,7 +127,7 @@ class TestMainIntegration:
             [{"pack_id": "faction_set_she", "cards": []}],
         )
         monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
-        with patch.dict(os.environ, {}, clear=True), patch("validate_seed_refs.notify_slack") as slack:
+        with patch.dict(os.environ, {}, clear=True), patch("validate_card_pack_refs.notify_slack") as slack:
             assert v.main() == 0
         slack.assert_not_called()
         assert "OK" in capsys.readouterr().out
@@ -140,7 +140,7 @@ class TestMainIntegration:
         )
         monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
         with patch.dict(os.environ, {"SLACK_WEBHOOK_URL": "https://hooks.slack.com/x"}, clear=True), \
-             patch("validate_seed_refs.notify_slack") as slack:
+             patch("validate_card_pack_refs.notify_slack") as slack:
             assert v.main() == 1
         slack.assert_called_once()
         # 呼び出し引数: (webhook_url, message)
@@ -157,7 +157,7 @@ class TestMainIntegration:
             [{"pack_id": "basic", "cards": []}],
         )
         monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
-        with patch.dict(os.environ, {}, clear=True), patch("validate_seed_refs.notify_slack") as slack:
+        with patch.dict(os.environ, {}, clear=True), patch("validate_card_pack_refs.notify_slack") as slack:
             assert v.main() == 1
         slack.assert_not_called()
         err = capsys.readouterr().err
