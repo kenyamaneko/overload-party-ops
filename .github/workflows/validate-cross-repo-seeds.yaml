@@ -5,14 +5,6 @@ on:
     # 18:00 UTC = 03:00 JST 翌日
     - cron: "0 18 * * *"
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.vscode/**'
-      - '.gitignore'
-      - 'LICENSE'
   pull_request:
     paths-ignore:
       - '**/*.md'
@@ -70,6 +62,6 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
-          python3 ops/cross-repo-seeds/check.py \
+          python3 ops/cross-repo-seeds/validate_seed_refs.py \
             --shop-yaml shop/data/products.yaml \
             --card-yaml card/data/card_packs.yaml

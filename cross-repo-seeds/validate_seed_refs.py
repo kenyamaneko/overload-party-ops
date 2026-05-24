@@ -94,13 +94,13 @@ def _actions_run_url() -> str:
 def _format_failure_message(missing: list[tuple[str, str]], run_url: str) -> str:
     """Slack 失敗通知の本文を組み立てる."""
     lines = [
-        f":x: *[cross-repo seed validation 失敗]* shop の card_pack_id 参照 {len(missing)} 件が card 側に存在しません。",
+        f":x: *[seed 整合検証 失敗]* shop の card_pack_id 参照 {len(missing)} 件が card 側に存在しません。",
     ]
     if run_url:
-        lines.append(f"<{run_url}|GitHub Actions log>")
+        lines.append(f"<{run_url}|GitHub Actions ログ>")
     lines.append("")
     for product_id, pack_id in missing:
-        lines.append(f"  • shop product `{product_id}` → card_pack_id `{pack_id}` (card に未定義)")
+        lines.append(f"  • shop 商品 `{product_id}` → card_pack_id `{pack_id}` (card に未定義)")
     return "\n".join(lines)
 
 

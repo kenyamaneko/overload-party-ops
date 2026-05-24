@@ -1,4 +1,4 @@
-"""cross-repo-seeds/check.py のユニットテスト."""
+"""cross-repo-seeds/validate_seed_refs.py のユニットテスト."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-import check as c
+import validate_seed_refs as v
 
 
 def _write_yaml(path: Path, data: dict) -> None:
@@ -27,7 +27,7 @@ class TestLoadShopRefs:
                 {"product_id": "pack_x", "type": "card_pack", "card_pack_id": "limited_x"},
             ],
         })
-        assert c.load_shop_card_pack_refs(path) == {
+        assert v.load_shop_card_pack_refs(path) == {
             "fs_she": "faction_set_she",
             "pack_x": "limited_x",
         }
@@ -41,13 +41,13 @@ class TestLoadShopRefs:
                 {"product_id": "stamp_a", "type": "cosmetic"},
             ],
         })
-        assert c.load_shop_card_pack_refs(path) == {"fs_she": "faction_set_she"}
+        assert v.load_shop_card_pack_refs(path) == {"fs_she": "faction_set_she"}
 
     def test_missing_top_level_products_raises(self, tmp_path: Path):
         path = tmp_path / "products.yaml"
         _write_yaml(path, {"other_key": []})
         with pytest.raises(ValueError, match="top-level 'products' key is required"):
-            c.load_shop_card_pack_refs(path)
+            v.load_shop_card_pack_refs(path)
 
 
 class TestLoadCardPackIds:
@@ -59,37 +59,37 @@ class TestLoadCardPackIds:
                 {"pack_id": "faction_set_she", "cards": []},
             ],
         })
-        assert c.load_card_pack_ids(path) == {"basic", "faction_set_she"}
+        assert v.load_card_pack_ids(path) == {"basic", "faction_set_she"}
 
     def test_missing_top_level_packs_raises(self, tmp_path: Path):
         path = tmp_path / "card_packs.yaml"
         _write_yaml(path, {"other_key": []})
         with pytest.raises(ValueError, match="top-level 'packs' key is required"):
-            c.load_card_pack_ids(path)
+            v.load_card_pack_ids(path)
 
 
 class TestFindMissing:
     def test_all_refs_present_returns_empty_list(self):
         shop_refs = {"fs_she": "faction_set_she"}
         card_ids = {"basic", "faction_set_she"}
-        assert c.find_missing(shop_refs, card_ids) == []
+        assert v.find_missing(shop_refs, card_ids) == []
 
     def test_missing_pack_id_reported_with_product_id(self):
         shop_refs = {"fs_ghost": "faction_set_ghost"}
         card_ids = {"basic"}
-        assert c.find_missing(shop_refs, card_ids) == [("fs_ghost", "faction_set_ghost")]
+        assert v.find_missing(shop_refs, card_ids) == [("fs_ghost", "faction_set_ghost")]
 
     def test_multiple_missing_reported_sorted(self):
         shop_refs = {"z": "z_pack", "a": "a_pack", "ok": "basic"}
         card_ids = {"basic"}
-        assert c.find_missing(shop_refs, card_ids) == [("a", "a_pack"), ("z", "z_pack")]
+        assert v.find_missing(shop_refs, card_ids) == [("a", "a_pack"), ("z", "z_pack")]
 
 
 class TestFormatFailureMessage:
     """Slack 失敗通知の整形仕様."""
 
     def test_includes_missing_product_and_pack_ids(self):
-        msg = c._format_failure_message(
+        msg = v._format_failure_message(
             [("fs_ghost", "faction_set_ghost"), ("fs_lost", "limited_lost")],
             run_url="",
         )
@@ -101,13 +101,13 @@ class TestFormatFailureMessage:
         assert "limited_lost" in msg
 
     def test_includes_actions_run_url_when_available(self):
-        msg = c._format_failure_message([("p", "q")], run_url="https://github.com/org/repo/actions/runs/1")
-        assert "<https://github.com/org/repo/actions/runs/1|GitHub Actions log>" in msg
+        msg = v._format_failure_message([("p", "q")], run_url="https://github.com/org/repo/actions/runs/1")
+        assert "<https://github.com/org/repo/actions/runs/1|GitHub Actions ログ>" in msg
 
     def test_omits_url_block_when_run_url_empty(self):
-        msg = c._format_failure_message([("p", "q")], run_url="")
+        msg = v._format_failure_message([("p", "q")], run_url="")
         # 空 run_url 時は URL line を出さない (ローカル実行を仮定)
-        assert "GitHub Actions log" not in msg
+        assert "GitHub Actions ログ" not in msg
 
 
 class TestMainIntegration:
@@ -127,8 +127,8 @@ class TestMainIntegration:
             [{"pack_id": "faction_set_she", "cards": []}],
         )
         monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
-        with patch.dict(os.environ, {}, clear=True), patch("check.notify_slack") as slack:
-            assert c.main() == 0
+        with patch.dict(os.environ, {}, clear=True), patch("validate_seed_refs.notify_slack") as slack:
+            assert v.main() == 0
         slack.assert_not_called()
         assert "OK" in capsys.readouterr().out
 
@@ -140,8 +140,8 @@ class TestMainIntegration:
         )
         monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
         with patch.dict(os.environ, {"SLACK_WEBHOOK_URL": "https://hooks.slack.com/x"}, clear=True), \
-             patch("check.notify_slack") as slack:
-            assert c.main() == 1
+             patch("validate_seed_refs.notify_slack") as slack:
+            assert v.main() == 1
         slack.assert_called_once()
         # 呼び出し引数: (webhook_url, message)
         webhook, msg = slack.call_args[0]
@@ -157,8 +157,8 @@ class TestMainIntegration:
             [{"pack_id": "basic", "cards": []}],
         )
         monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
-        with patch.dict(os.environ, {}, clear=True), patch("check.notify_slack") as slack:
-            assert c.main() == 1
+        with patch.dict(os.environ, {}, clear=True), patch("validate_seed_refs.notify_slack") as slack:
+            assert v.main() == 1
         slack.assert_not_called()
         err = capsys.readouterr().err
         assert "SLACK_WEBHOOK_URL is not set" in err

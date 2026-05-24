@@ -14,11 +14,11 @@ shop / card 両 repo の seed YAML 間の参照整合性を検証し、不整合
 
 - cron: 18:00 UTC = 03:00 JST 翌日 (daily)
 - workflow_dispatch (手動)
-- push / pull_request (check.py / test_check.py / workflow 変更時)
+- pull_request (validate_seed_refs.py / test_validate_seed_refs.py / workflow 変更時)
 
 ## Slack 通知
 
-- 整合確認のみ (失敗時): `:x: cross-repo seed validation 失敗` + 各 product → 未定義 pack_id の一覧 + Actions run URL
+- 失敗時のみ: `:x: [seed 整合検証 失敗]` + 各 product → 未定義 pack_id の一覧 + Actions ログ URL
 - 成功時は Slack 通知なし (cron 健全性は GitHub Actions の history で確認)
 
 ## 必要な Secret / Variable
