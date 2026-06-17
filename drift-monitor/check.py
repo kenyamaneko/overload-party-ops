@@ -51,7 +51,7 @@ def clone_repo(repo: str, token: str) -> str | None:
     return dest
 
 
-def terraform_plan(work_dir: str) -> tuple[int, str]:
+def run_terraform_plan(work_dir: str) -> tuple[int, str]:
     """terraform init + plan (+ show -json) を実行し (exit_code, output) を返します。
 
     exit_code と output の意味:
@@ -202,7 +202,7 @@ _ACTION_TO_LABEL = {
 }
 
 
-def _action_label(actions: list[str]) -> str:
+def format_action_label(actions: list[str]) -> str:
     """resource_changes[].change.actions を terraform plan のテキスト表現に寄せる。"""
     label = _ACTION_TO_LABEL.get(tuple(actions))
     if label is None:
@@ -245,7 +245,7 @@ def format_summary(visible_changes: list[dict]) -> str:
     )
 
     resource_lines = [
-        f"{rc.get('address', '')} will be {_action_label(rc['change']['actions'])}"
+        f"{rc.get('address', '')} will be {format_action_label(rc['change']['actions'])}"
         for rc in visible_changes
     ]
 
@@ -319,7 +319,7 @@ def main() -> None:
                 errors.append({"repo": repo, "env": env_name, "detail": "directory not found"})
                 continue
 
-            exit_code, output = terraform_plan(work_dir)
+            exit_code, output = run_terraform_plan(work_dir)
 
             if exit_code == 0:
                 print("no drift")

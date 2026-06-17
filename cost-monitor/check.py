@@ -23,7 +23,7 @@ def load_environments() -> dict[str, str]:
         return yaml.safe_load(f)
 
 
-def _actions_run_url() -> str:
+def build_actions_run_url() -> str:
     """GitHub Actions 実行中なら当該 run の URL を返します。ローカル実行時は空文字。"""
     server = os.environ.get("GITHUB_SERVER_URL", "").rstrip("/")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
@@ -77,7 +77,7 @@ def main() -> None:
         print("No environments loaded")
         sys.exit(1)
 
-    gke_available, gke_auth_err = setup_gke_credentials()
+    is_gke_available, gke_auth_err = setup_gke_credentials()
     all_costs: dict[str, list[str]] = {}
     all_errors: dict[str, list[str]] = {}
     # GKE 認証失敗は全環境共通のエラーとして Slack に必ず載せる
@@ -86,7 +86,7 @@ def main() -> None:
 
     for env, project in environments.items():
         print(f"=== Checking {env} ({project}) ===")
-        costs, errors = check_environment(env, project, gke_available=gke_available)
+        costs, errors = check_environment(env, project, is_gke_available=is_gke_available)
         if costs:
             all_costs[env] = costs
         if errors:
@@ -117,7 +117,7 @@ def main() -> None:
 
     if all_errors:
         # 詳細は Actions ログに出ているため、ユーザーが辿れるよう URL を載せる
-        lines.append(_build_error_header(today, _actions_run_url()))
+        lines.append(_build_error_header(today, build_actions_run_url()))
         lines.append("")
         for env, errors in all_errors.items():
             lines.append(f"*{env}*")

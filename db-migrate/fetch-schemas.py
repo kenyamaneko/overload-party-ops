@@ -128,16 +128,16 @@ def build_union(lock: dict, workdir: Path, token: str | None, ref_override: str 
 
 def main() -> int:
     """スキーマ取得・結合のメインエントリーポイントです。"""
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--lock", default="db-migrate/schemas.lock.yaml")
-    ap.add_argument("--out", default="db-migrate/sql/schema_union.sql")
-    ap.add_argument("--grant-src", default="db-migrate/grant_iam.sql",
-                    help="Canonical grant_iam.sql path (committed in ops repo). "
-                         "Copied alongside the union so Dockerfile COPY sql/ picks up both.")
-    ap.add_argument("--workdir", default="/tmp/schema-src")
-    ap.add_argument("--token", default=None)
-    ap.add_argument("--ref-override", default=None)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--lock", default="db-migrate/schemas.lock.yaml")
+    parser.add_argument("--out", default="db-migrate/sql/schema_union.sql")
+    parser.add_argument("--grant-src", default="db-migrate/grant_iam.sql",
+                        help="Canonical grant_iam.sql path (committed in ops repo). "
+                             "Copied alongside the union so Dockerfile COPY sql/ picks up both.")
+    parser.add_argument("--workdir", default="/tmp/schema-src")
+    parser.add_argument("--token", default=None)
+    parser.add_argument("--ref-override", default=None)
+    args = parser.parse_args()
 
     token = args.token or os.environ.get("GITHUB_TOKEN") or os.environ.get("DB_MIGRATE_TOKEN")
     lock = _load_yaml(Path(args.lock))
