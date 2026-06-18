@@ -237,7 +237,7 @@ def check_psc(project: str) -> tuple[list[str], list[str]]:
     return costs, errors
 
 
-def is_namespace_present(env: str) -> tuple[bool, str | None]:
+def check_namespace_present(env: str) -> tuple[bool, str | None]:
     """Kubernetes namespace が存在するか確認します。
 
     戻り値: (存在するか, エラー詳細)。NotFound は (False, None)、
@@ -273,7 +273,7 @@ def check_environment(
     _collect(check_cloudsql(project))
     _collect(check_gke_nodepool(env))
     if is_gke_available:
-        is_namespace_ok, ns_err = is_namespace_present(env)
+        is_namespace_ok, ns_err = check_namespace_present(env)
         if ns_err:
             errors.append(ns_err)
         if is_namespace_ok:

@@ -17,10 +17,10 @@ from resources import (
     check_environment,
     check_gke_nodepool,
     check_ingress,
+    check_namespace_present,
     check_psc,
     check_static_ips,
     format_cmd_failure,
-    is_namespace_present,
     setup_gke_credentials,
 )
 
@@ -400,13 +400,13 @@ class TestCheckEnvironment:
              patch("resources.check_ingress", return_value=([], [])) as ingress, \
              patch("resources.check_static_ips", return_value=([], [])) as static_ips, \
              patch("resources.check_psc", return_value=([], [])) as psc, \
-             patch("resources.is_namespace_present", return_value=(True, None)) as ns:
+             patch("resources.check_namespace_present", return_value=(True, None)) as ns:
             self.cloudsql = cloudsql
             self.nodepool = nodepool
             self.ingress = ingress
             self.static_ips = static_ips
             self.psc = psc
-            self.is_namespace_present = ns
+            self.check_namespace_present = ns
             yield
 
     def test_gke_unavailable_skips_only_kubectl_checks(self):
@@ -423,7 +423,7 @@ class TestCheckEnvironment:
         self.static_ips.assert_called_once()
         self.psc.assert_called_once()
         # kubectl 系のみスキップ
-        self.is_namespace_present.assert_not_called()
+        self.check_namespace_present.assert_not_called()
         self.ingress.assert_not_called()
 
     def test_missing_namespace_skips_ingress_check(self):
@@ -431,7 +431,7 @@ class TestCheckEnvironment:
 
         nodepool は namespace に依存しないので独立に呼ばれる。
         """
-        self.is_namespace_present.return_value = (False, None)
+        self.check_namespace_present.return_value = (False, None)
         costs, errors = check_environment("dev", "proj")
         self.ingress.assert_not_called()
         # namespace 非依存のチェックは全て呼ばれる
@@ -446,7 +446,7 @@ class TestCheckEnvironment:
 
         認証失敗等の重大エラーを silent に「namespace 無し」扱いしないための仕様。
         """
-        self.is_namespace_present.return_value = (False, "認証失敗 (詳細はログ)")
+        self.check_namespace_present.return_value = (False, "認証失敗 (詳細はログ)")
         costs, errors = check_environment("dev", "proj")
         assert "認証失敗 (詳細はログ)" in errors
         # エラー時は kubectl 依存の Ingress を呼ばない (二次障害を避ける)
@@ -561,13 +561,13 @@ class TestNamespaceExists:
     def test_success_returns_true_none(self):
         """観点: returncode=0 なら (True, None)。"""
         with patch("resources.subprocess.run", return_value=_subprocess_result(0)):
-            assert is_namespace_present("dev") == (True, None)
+            assert check_namespace_present("dev") == (True, None)
 
     def test_not_found_in_stderr_is_silent_skip(self):
         """観点: stderr に NotFound → (False, None) で正常スキップ。"""
         stderr = 'Error from server (NotFound): namespaces "dev" not found'
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr=stderr)):
-            assert is_namespace_present("dev") == (False, None)
+            assert check_namespace_present("dev") == (False, None)
 
     def test_not_found_in_stdout_only_is_also_silent_skip(self):
         """観点: stderr が空で stdout 側に NotFound が出るケースでも拾う（combined 判定の仕様）。
@@ -576,7 +576,7 @@ class TestNamespaceExists:
         silent failure にならないための仕様固定。
         """
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr="", stdout="NotFound")):
-            assert is_namespace_present("dev") == (False, None)
+            assert check_namespace_present("dev") == (False, None)
 
     def test_permission_denied_is_not_silent(self):
         """観点: permission denied を NotFound と誤判定せず、エラー詳細を返す。
@@ -586,7 +586,7 @@ class TestNamespaceExists:
         この silent 化を絶対に作らないための固定テスト。
         """
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr="permission denied")):
-            ok, err = is_namespace_present("dev")
+            ok, err = check_namespace_present("dev")
         assert ok is False
         assert err is not None
         assert "dev" in err
@@ -600,14 +600,14 @@ class TestNamespaceExists:
         「空 stderr を NotFound 扱い」する silent failure が紛れる。
         """
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr="", stdout="")):
-            ok, err = is_namespace_present("dev")
+            ok, err = check_namespace_present("dev")
         assert ok is False
         assert err is not None
 
     def test_failure_logs_detail(self, capsys):
         """観点: 非 NotFound エラーの詳細が print で Actions ログに残る。"""
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr="specific RBAC failure")):
-            is_namespace_present("dev")
+            check_namespace_present("dev")
         captured = capsys.readouterr()
         assert "specific RBAC failure" in captured.out
 
