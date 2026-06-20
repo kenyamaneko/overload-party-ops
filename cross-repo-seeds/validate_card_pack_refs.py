@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""shop / card 両 repo の seed YAML 間の参照整合性を検証し Slack 通知する。
+"""shop / card 両 repo の seed YAML 間の card_pack 参照整合性を検証し Slack 通知する。
 
 shop の data/products.yaml に定義された product の card_pack_id が、card の
-data/card_packs.yaml に定義された pack_id 集合に含まれることを確認する。
-不整合があれば失敗 (どの shop product がどの card_pack_id を参照していて card 側に
-無いか) を Slack に通知して non-zero exit する。
+data/card_packs.yaml に定義された pack_id 集合に含まれることを確認する。検証結果は
+成功・失敗いずれも Slack に通知し、不整合があれば non-zero exit する。
 
 Usage:
     SLACK_WEBHOOK_URL=https://hooks.slack.com/... \\
-    python3 cross-repo-seeds/check.py \\
+    python3 cross-repo-seeds/validate_card_pack_refs.py \\
         --shop-yaml /path/to/overload-party-shop/data/products.yaml \\
         --card-yaml /path/to/overload-party-card/data/card_packs.yaml
 """
@@ -16,19 +15,16 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import sys
-import urllib.request
 from pathlib import Path
+
+import slack_notifier
 
 try:
     import yaml
 except ImportError:
     print("ERROR: pyyaml is required. Install with: pip install pyyaml", file=sys.stderr)
     sys.exit(1)
-
-SLACK_TEXT_LIMIT = 40000
 
 
 def load_shop_card_pack_refs(shop_yaml: Path) -> dict[str, str]:
@@ -64,33 +60,6 @@ def find_missing(shop_refs: dict[str, str], card_pack_ids: set[str]) -> list[tup
     )
 
 
-def notify_slack(webhook_url: str, message: str) -> None:
-    """Slack Webhook にメッセージを送信します。"""
-    if len(message) > SLACK_TEXT_LIMIT:
-        message = message[:SLACK_TEXT_LIMIT] + "\n…(truncated)"
-    payload = json.dumps({"text": message}).encode()
-    req = urllib.request.Request(
-        webhook_url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        urllib.request.urlopen(req)
-    except Exception as e:
-        print(f"Slack notification failed: {e}", file=sys.stderr)
-        sys.exit(1)
-
-
-def _actions_run_url() -> str:
-    """GitHub Actions 実行中なら当該 run の URL を返します。ローカル実行時は空文字。"""
-    server = os.environ.get("GITHUB_SERVER_URL", "").rstrip("/")
-    repo = os.environ.get("GITHUB_REPOSITORY", "")
-    run_id = os.environ.get("GITHUB_RUN_ID", "")
-    if server and repo and run_id:
-        return f"{server}/{repo}/actions/runs/{run_id}"
-    return ""
-
-
 def _format_failure_message(missing: list[tuple[str, str]], run_url: str) -> str:
     """Slack 失敗通知の本文を組み立てる."""
     lines = [
@@ -104,6 +73,17 @@ def _format_failure_message(missing: list[tuple[str, str]], run_url: str) -> str
     return "\n".join(lines)
 
 
+def _format_success_message(shop_ref_count: int, card_pack_count: int, run_url: str) -> str:
+    """Slack 成功通知の本文を組み立てる."""
+    lines = [
+        f":white_check_mark: *[card_pack 参照整合 OK]* shop の {shop_ref_count} 商品すべてが "
+        f"有効な card_pack_id を参照しています (card は {card_pack_count} pack 定義)。",
+    ]
+    if run_url:
+        lines.append(f"<{run_url}|GitHub Actions ログ>")
+    return "\n".join(lines)
+
+
 def main() -> int:
     """エントリポイント。"""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -114,11 +94,15 @@ def main() -> int:
     shop_refs = load_shop_card_pack_refs(args.shop_yaml)
     card_pack_ids = load_card_pack_ids(args.card_yaml)
     missing = find_missing(shop_refs, card_pack_ids)
+    run_url = slack_notifier.build_actions_run_url()
 
     if not missing:
         print(
             f"OK: {len(shop_refs)} shop product(s) all reference valid card_pack_id "
             f"(card defines {len(card_pack_ids)} pack(s))"
+        )
+        slack_notifier.notify_if_configured(
+            _format_success_message(len(shop_refs), len(card_pack_ids), run_url)
         )
         return 0
 
@@ -129,11 +113,7 @@ def main() -> int:
     for product_id, pack_id in missing:
         sys.stderr.write(f"  - shop product {product_id!r} → card_pack_id {pack_id!r}\n")
 
-    webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
-    if webhook_url:
-        notify_slack(webhook_url, _format_failure_message(missing, _actions_run_url()))
-    else:
-        print("SLACK_WEBHOOK_URL is not set, skipping Slack notification", file=sys.stderr)
+    slack_notifier.notify_if_configured(_format_failure_message(missing, run_url))
     return 1
 
 

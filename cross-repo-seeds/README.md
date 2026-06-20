@@ -1,6 +1,6 @@
 # cross-repo-seeds
 
-shop / card 両 repo の seed YAML 間の参照整合性を検証し、不整合があれば Slack に通知する。
+shop / card 両 repo の seed YAML 間の参照整合性を検証し、結果を Slack に通知する。
 
 ## チェック対象
 
@@ -14,12 +14,16 @@ shop / card 両 repo の seed YAML 間の参照整合性を検証し、不整合
 
 - cron: 18:00 UTC = 03:00 JST 翌日 (daily)
 - workflow_dispatch (手動)
-- pull_request (validate_card_pack_refs.py / test_validate_card_pack_refs.py / workflow 変更時)
+- pull_request (validate_card_pack_refs.py / slack_notifier.py / test / workflow 変更時)
 
 ## Slack 通知
 
-- 失敗時のみ: `:x: [card_pack 参照整合 失敗]` + 各 product → 未定義 pack_id の一覧 + Actions ログ URL
-- 成功時は Slack 通知なし (cron 健全性は GitHub Actions の history で確認)
+検証結果を成功・失敗いずれも Slack に通知する。
+
+- 成功時: `:white_check_mark: [card_pack 参照整合 OK]` + 検証した商品数 / pack 数 + Actions ログ URL
+- 失敗時: `:x: [card_pack 参照整合 失敗]` + 各 product → 未定義 pack_id の一覧 + Actions ログ URL
+
+Webhook 送信と Actions run URL 組み立ては `slack_notifier.py` に切り出してあり、card_pack 以外の cross-repo 検証を追加する際も再利用できる。
 
 ## 必要な Secret / Variable
 
