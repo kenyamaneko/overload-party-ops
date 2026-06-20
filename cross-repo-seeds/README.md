@@ -20,8 +20,8 @@ shop / card 両 repo の seed YAML 間の参照整合性を検証し、結果を
 
 検証結果を成功・失敗いずれも Slack に通知する。
 
-- 成功時: `:white_check_mark: [card_pack 参照整合 OK]` (通過のみを示す短文)
-- 失敗時: `:x: [card_pack 参照整合 失敗]` + 各 product → 未定義 pack_id の一覧 + Actions ログ URL
+- 成功時: `:white_check_mark: *[参照整合 {JST日付}] card_pack OK*` (cost-monitor / drift-monitor と同じ日付ヘッダ書式)
+- 失敗時: `:x: *[参照整合 {JST日付}] card_pack 不整合*` + 各 product → 未定義 pack_id の一覧 + Actions ログ URL
 
 `SLACK_WEBHOOK_URL` は必須。未設定なら通知経路が無い異常として exit 1 で落とす (cost-monitor / drift-monitor と同仕様)。Webhook 送信と Actions run URL 組み立ては `slack_notifier.py` に切り出してあり、card_pack 以外の cross-repo 検証を追加する際も再利用できる。
 

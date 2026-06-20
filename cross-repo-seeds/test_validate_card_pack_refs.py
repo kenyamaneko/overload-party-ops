@@ -88,11 +88,14 @@ class TestFindMissing:
 class TestFormatFailureMessage:
     """Slack 失敗通知の整形仕様."""
 
-    def test_includes_missing_product_and_pack_ids(self):
+    def test_includes_dated_header_and_missing_ids(self):
+        """観点: 失敗通知に日付ヘッダ・件数・各 product / pack id が載る."""
         msg = v._format_failure_message(
             [("fs_ghost", "faction_set_ghost"), ("fs_lost", "limited_lost")],
+            "2026-06-20",
             run_url="",
         )
+        assert "[参照整合 2026-06-20]" in msg
         assert "2 件" in msg
         assert ":x:" in msg
         assert "fs_ghost" in msg
@@ -101,11 +104,15 @@ class TestFormatFailureMessage:
         assert "limited_lost" in msg
 
     def test_includes_actions_run_url_when_available(self):
-        msg = v._format_failure_message([("p", "q")], run_url="https://github.com/org/repo/actions/runs/1")
+        """観点: run_url があれば Actions ログへの動線を載せる."""
+        msg = v._format_failure_message(
+            [("p", "q")], "2026-06-20", run_url="https://github.com/org/repo/actions/runs/1"
+        )
         assert "<https://github.com/org/repo/actions/runs/1|GitHub Actions ログ>" in msg
 
     def test_omits_url_block_when_run_url_empty(self):
-        msg = v._format_failure_message([("p", "q")], run_url="")
+        """観点: run_url が空 (ローカル実行) なら URL 行を出さない."""
+        msg = v._format_failure_message([("p", "q")], "2026-06-20", run_url="")
         # 空 run_url 時は URL line を出さない (ローカル実行を仮定)
         assert "GitHub Actions ログ" not in msg
 
@@ -113,11 +120,12 @@ class TestFormatFailureMessage:
 class TestFormatSuccessMessage:
     """Slack 成功通知の整形仕様."""
 
-    def test_conveys_only_that_check_passed(self):
-        """観点: 成功通知は通過したことだけを示す短文にする (件数や URL は載せない)."""
-        msg = v._format_success_message()
+    def test_uses_fleet_dated_header_format(self):
+        """観点: 成功通知はフリート書式 [参照整合 {date}] card_pack OK の短文にする."""
+        msg = v._format_success_message("2026-06-20")
         assert ":white_check_mark:" in msg
-        assert "card_pack 参照整合 OK" in msg
+        assert "[参照整合 2026-06-20]" in msg
+        assert "card_pack OK" in msg
 
 
 class TestMainIntegration:
@@ -144,7 +152,7 @@ class TestMainIntegration:
         slack.assert_called_once()
         webhook, msg = slack.call_args[0]
         assert webhook == "https://hooks.slack.com/x"
-        assert "card_pack 参照整合 OK" in msg
+        assert "card_pack OK" in msg
         assert "OK" in capsys.readouterr().out
 
     def test_missing_refs_notifies_failure(self, tmp_path: Path, capsys, monkeypatch):

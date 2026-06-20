@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import slack_notifier
@@ -25,6 +26,8 @@ try:
 except ImportError:
     print("ERROR: pyyaml is required. Install with: pip install pyyaml", file=sys.stderr)
     sys.exit(1)
+
+_JST_OFFSET_HOURS = 9
 
 
 def load_shop_card_pack_refs(shop_yaml: Path) -> dict[str, str]:
@@ -60,18 +63,20 @@ def find_missing(shop_refs: dict[str, str], card_pack_ids: set[str]) -> list[tup
     )
 
 
-def _format_failure_message(missing: list[tuple[str, str]], run_url: str) -> str:
+def _format_failure_message(missing: list[tuple[str, str]], today: str, run_url: str) -> str:
     """Slack 失敗通知の本文を組み立てる.
 
     Args:
         missing: card 側に存在しない (product_id, card_pack_id) の一覧。
+        today: 通知日付 (JST, YYYY-MM-DD)。
         run_url: GitHub Actions run の URL。空なら URL 行を省く。
 
     Returns:
         Slack に送る失敗通知の本文。
     """
     lines = [
-        f":x: *[card_pack 参照整合 失敗]* shop の card_pack_id 参照 {len(missing)} 件が card 側に存在しません。",
+        f":x: *[参照整合 {today}] card_pack 不整合* "
+        f"shop の card_pack_id 参照 {len(missing)} 件が card 側に存在しません。",
     ]
     if run_url:
         lines.append(f"<{run_url}|GitHub Actions ログ>")
@@ -81,13 +86,16 @@ def _format_failure_message(missing: list[tuple[str, str]], run_url: str) -> str
     return "\n".join(lines)
 
 
-def _format_success_message() -> str:
+def _format_success_message(today: str) -> str:
     """Slack 成功通知の本文を組み立てる.
+
+    Args:
+        today: 通知日付 (JST, YYYY-MM-DD)。
 
     Returns:
         Slack に送る成功通知の本文。
     """
-    return ":white_check_mark: *[card_pack 参照整合 OK]*"
+    return f":white_check_mark: *[参照整合 {today}] card_pack OK*"
 
 
 def main() -> int:
@@ -102,6 +110,8 @@ def main() -> int:
     args = parser.parse_args()
 
     webhook_url = slack_notifier.require_webhook_url()
+    jst = timezone(timedelta(hours=_JST_OFFSET_HOURS))
+    today = datetime.now(jst).strftime("%Y-%m-%d")
 
     shop_refs = load_shop_card_pack_refs(args.shop_yaml)
     card_pack_ids = load_card_pack_ids(args.card_yaml)
@@ -112,7 +122,7 @@ def main() -> int:
             f"OK: {len(shop_refs)} shop product(s) all reference valid card_pack_id "
             f"(card defines {len(card_pack_ids)} pack(s))"
         )
-        slack_notifier.post_to_slack(webhook_url, _format_success_message())
+        slack_notifier.post_to_slack(webhook_url, _format_success_message(today))
         return 0
 
     sys.stderr.write(
@@ -123,7 +133,7 @@ def main() -> int:
         sys.stderr.write(f"  - shop product {product_id!r} → card_pack_id {pack_id!r}\n")
 
     run_url = slack_notifier.build_actions_run_url()
-    slack_notifier.post_to_slack(webhook_url, _format_failure_message(missing, run_url))
+    slack_notifier.post_to_slack(webhook_url, _format_failure_message(missing, today, run_url))
     return 1
 
 
