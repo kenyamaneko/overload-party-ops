@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from check import (
-    _actions_run_url,
     _build_error_header,
+    build_actions_run_url,
     load_environments,
     notify_slack,
 )
@@ -17,10 +17,10 @@ from resources import (
     check_environment,
     check_gke_nodepool,
     check_ingress,
+    check_namespace_present,
     check_psc,
     check_static_ips,
     format_cmd_failure,
-    namespace_exists,
     setup_gke_credentials,
 )
 
@@ -131,7 +131,7 @@ class TestActionsRunUrl:
             "GITHUB_RUN_ID": "12345",
         }
         with patch.dict(os.environ, env, clear=True):
-            assert _actions_run_url() == "https://github.com/kenyamaneko/overload-party-ops/actions/runs/12345"
+            assert build_actions_run_url() == "https://github.com/kenyamaneko/overload-party-ops/actions/runs/12345"
 
     def test_missing_run_id_returns_empty(self):
         """観点: RUN_ID が欠けていれば URL を組み立てない（ローカル実行など）。"""
@@ -140,12 +140,12 @@ class TestActionsRunUrl:
             "GITHUB_REPOSITORY": "kenyamaneko/overload-party-ops",
         }
         with patch.dict(os.environ, env, clear=True):
-            assert _actions_run_url() == ""
+            assert build_actions_run_url() == ""
 
     def test_no_env_vars_returns_empty(self):
         """観点: 全ての環境変数が無い（ローカル実行）時は空文字で、URL 埋め込みをスキップできる。"""
         with patch.dict(os.environ, {}, clear=True):
-            assert _actions_run_url() == ""
+            assert build_actions_run_url() == ""
 
     def test_trailing_slash_stripped(self):
         """観点: GITHUB_SERVER_URL の末尾スラッシュで URL がダブルスラッシュにならない。"""
@@ -155,7 +155,7 @@ class TestActionsRunUrl:
             "GITHUB_RUN_ID": "1",
         }
         with patch.dict(os.environ, env, clear=True):
-            assert _actions_run_url() == "https://github.com/org/repo/actions/runs/1"
+            assert build_actions_run_url() == "https://github.com/org/repo/actions/runs/1"
 
 
 class TestCheckGkeNodepool:
@@ -179,7 +179,7 @@ class TestCheckGkeNodepool:
 
     def test_target_size_positive_is_cost(self):
         """観点: instance group の targetSize > 0 は稼働中としてコスト警告に載る。"""
-        with patch("resources.gcloud", side_effect=[self._nodepool_json(), self._ig_json(2)]):
+        with patch("resources.run_gcloud", side_effect=[self._nodepool_json(), self._ig_json(2)]):
             costs, errors = check_gke_nodepool("dev")
         assert len(costs) == 1
         assert "keyandnotes-main-dev" in costs[0]
@@ -188,7 +188,7 @@ class TestCheckGkeNodepool:
 
     def test_target_size_zero_is_not_cost(self):
         """観点: targetSize == 0 は「スケールダウン済み」の正常状態、エラー扱いしない。"""
-        with patch("resources.gcloud", side_effect=[self._nodepool_json(), self._ig_json(0)]):
+        with patch("resources.run_gcloud", side_effect=[self._nodepool_json(), self._ig_json(0)]):
             costs, errors = check_gke_nodepool("dev")
         assert costs == []
         assert errors == []
@@ -199,7 +199,7 @@ class TestCheckGkeNodepool:
         environments.yaml に env を追加した時点で対応する nodepool が存在することは
         前提。見つからないなら設定の不整合か削除事故であり silent skip しない。
         """
-        with patch("resources.gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
+        with patch("resources.run_gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_gke_nodepool("dev")
         assert costs == []
         assert len(errors) == 1
@@ -212,7 +212,7 @@ class TestCheckGkeNodepool:
         silent に「稼働なし」扱いすると nodepool 構成変更で監視が機能しなくなったことに
         気付けない。
         """
-        with patch("resources.gcloud", return_value=json.dumps({"instanceGroupUrls": []})):
+        with patch("resources.run_gcloud", return_value=json.dumps({"instanceGroupUrls": []})):
             costs, errors = check_gke_nodepool("dev")
         assert costs == []
         assert len(errors) == 1
@@ -224,7 +224,7 @@ class TestCheckGkeNodepool:
         API レスポンスフォーマット変更や権限不足で一部フィールドが返らないケースを
         「稼働なし」と誤判定させない仕様の固定。
         """
-        with patch("resources.gcloud", side_effect=[self._nodepool_json(), self._ig_json(None)]):
+        with patch("resources.run_gcloud", side_effect=[self._nodepool_json(), self._ig_json(None)]):
             costs, errors = check_gke_nodepool("dev")
         assert costs == []
         assert len(errors) == 1
@@ -232,7 +232,7 @@ class TestCheckGkeNodepool:
 
     def test_instance_group_describe_failure_is_error(self):
         """観点: nodepool が参照する IG describe が失敗したら errors に流す (silent skip しない)。"""
-        with patch("resources.gcloud", side_effect=[
+        with patch("resources.run_gcloud", side_effect=[
             self._nodepool_json(), CommandError("gcloud 実行失敗 (exit 1)"),
         ]):
             costs, errors = check_gke_nodepool("dev")
@@ -246,7 +246,7 @@ class TestCheckGkeNodepool:
             "https://x/instanceGroupManagers/ig-a",
             "https://x/instanceGroupManagers/ig-b",
         ]
-        with patch("resources.gcloud", side_effect=[
+        with patch("resources.run_gcloud", side_effect=[
             self._nodepool_json(urls), self._ig_json(1), self._ig_json(2),
         ]):
             costs, errors = check_gke_nodepool("dev")
@@ -256,7 +256,7 @@ class TestCheckGkeNodepool:
 
     def test_nodepool_command_error_is_reported(self):
         """観点: nodepool describe の CommandError は errors に意味あるメッセージで載る。"""
-        with patch("resources.gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
+        with patch("resources.run_gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_gke_nodepool("dev")
         assert costs == []
         assert len(errors) == 1
@@ -265,7 +265,7 @@ class TestCheckGkeNodepool:
 
     def test_malformed_json_is_error(self):
         """観点: JSON パース失敗は errors に追加し、稼働中として誤検知しない。"""
-        with patch("resources.gcloud", return_value="not-json"):
+        with patch("resources.run_gcloud", return_value="not-json"):
             costs, errors = check_gke_nodepool("dev")
         assert costs == []
         assert len(errors) == 1
@@ -278,7 +278,7 @@ class TestCheckIngress:
     def test_ingress_with_ip_is_cost(self):
         """観点: Ingress の LoadBalancer に IP が割り振られていれば稼働中としてコスト表示。"""
         ing = {"status": {"loadBalancer": {"ingress": [{"ip": "1.2.3.4"}]}}}
-        with patch("resources.kubectl_json", return_value=json.dumps(ing)):
+        with patch("resources.run_kubectl_json", return_value=json.dumps(ing)):
             costs, errors = check_ingress("dev")
         assert len(costs) == 1
         assert "1.2.3.4" in costs[0]
@@ -287,7 +287,7 @@ class TestCheckIngress:
     def test_no_ip_assigned_is_not_cost(self):
         """観点: loadBalancer.ingress が空なら IP 未割り振り = 稼働していない扱い。"""
         ing = {"status": {"loadBalancer": {"ingress": []}}}
-        with patch("resources.kubectl_json", return_value=json.dumps(ing)):
+        with patch("resources.run_kubectl_json", return_value=json.dumps(ing)):
             costs, errors = check_ingress("dev")
         assert costs == []
         assert errors == []
@@ -298,7 +298,7 @@ class TestCheckIngress:
         silent に "unknown" 表示せず errors に流し、人間の調査を促す。
         """
         ing = {"status": {"loadBalancer": {"ingress": [{"hostname": "foo"}]}}}
-        with patch("resources.kubectl_json", return_value=json.dumps(ing)):
+        with patch("resources.run_kubectl_json", return_value=json.dumps(ing)):
             costs, errors = check_ingress("dev")
         assert costs == []
         assert len(errors) == 1
@@ -306,7 +306,7 @@ class TestCheckIngress:
 
     def test_not_found_returns_empty(self):
         """観点: Ingress が存在しない（NotFound）場合は空でスキップ。"""
-        with patch("resources.kubectl_json", return_value=""):
+        with patch("resources.run_kubectl_json", return_value=""):
             costs, errors = check_ingress("dev")
         assert costs == []
         assert errors == []
@@ -321,7 +321,7 @@ class TestCheckStaticIps:
             {"name": "ip-a", "address": "1.1.1.1"},
             {"name": "ip-b", "address": "2.2.2.2"},
         ]
-        with patch("resources.gcloud", return_value=json.dumps(addrs)):
+        with patch("resources.run_gcloud", return_value=json.dumps(addrs)):
             costs, errors = check_static_ips("proj")
         assert len(costs) == 2
         assert "ip-a" in costs[0] and "1.1.1.1" in costs[0]
@@ -329,7 +329,7 @@ class TestCheckStaticIps:
 
     def test_empty_list_no_costs(self):
         """観点: 予約済み IP が 0 件なら空で返る。"""
-        with patch("resources.gcloud", return_value="[]"):
+        with patch("resources.run_gcloud", return_value="[]"):
             costs, errors = check_static_ips("proj")
         assert costs == []
         assert errors == []
@@ -337,7 +337,7 @@ class TestCheckStaticIps:
     def test_missing_name_field_is_error(self):
         """観点: name フィールドが欠けていれば silent に "unknown" 表示せずエラー。"""
         addrs = [{"address": "1.1.1.1"}]
-        with patch("resources.gcloud", return_value=json.dumps(addrs)):
+        with patch("resources.run_gcloud", return_value=json.dumps(addrs)):
             costs, errors = check_static_ips("proj")
         assert costs == []
         assert len(errors) == 1
@@ -345,7 +345,7 @@ class TestCheckStaticIps:
     def test_missing_address_field_is_error(self):
         """観点: address フィールドが欠けていれば silent に "unknown" 表示せずエラー。"""
         addrs = [{"name": "ip-a"}]
-        with patch("resources.gcloud", return_value=json.dumps(addrs)):
+        with patch("resources.run_gcloud", return_value=json.dumps(addrs)):
             costs, errors = check_static_ips("proj")
         assert costs == []
         assert len(errors) == 1
@@ -356,7 +356,7 @@ class TestCheckStaticIps:
             {"name": "ok", "address": "1.1.1.1"},
             {"name": "broken"},  # address 欠落
         ]
-        with patch("resources.gcloud", return_value=json.dumps(addrs)):
+        with patch("resources.run_gcloud", return_value=json.dumps(addrs)):
             costs, errors = check_static_ips("proj")
         assert len(costs) == 1
         assert "ok" in costs[0]
@@ -369,7 +369,7 @@ class TestCheckPsc:
     def test_psc_rules_are_costs(self):
         """観点: forwarding rule は稼働中としてコスト表示。"""
         rules = [{"name": "rule-a"}, {"name": "rule-b"}]
-        with patch("resources.gcloud", return_value=json.dumps(rules)):
+        with patch("resources.run_gcloud", return_value=json.dumps(rules)):
             costs, errors = check_psc("proj")
         assert len(costs) == 2
         assert "rule-a" in costs[0]
@@ -377,14 +377,14 @@ class TestCheckPsc:
 
     def test_empty_list_no_costs(self):
         """観点: forwarding rule が 0 件なら空で返る。"""
-        with patch("resources.gcloud", return_value="[]"):
+        with patch("resources.run_gcloud", return_value="[]"):
             costs, errors = check_psc("proj")
         assert costs == []
         assert errors == []
 
     def test_missing_name_field_is_error(self):
         """観点: name フィールドが欠けていれば silent に "unknown" 表示せずエラー。"""
-        with patch("resources.gcloud", return_value=json.dumps([{"target": "x"}])):
+        with patch("resources.run_gcloud", return_value=json.dumps([{"target": "x"}])):
             costs, errors = check_psc("proj")
         assert costs == []
         assert len(errors) == 1
@@ -400,13 +400,13 @@ class TestCheckEnvironment:
              patch("resources.check_ingress", return_value=([], [])) as ingress, \
              patch("resources.check_static_ips", return_value=([], [])) as static_ips, \
              patch("resources.check_psc", return_value=([], [])) as psc, \
-             patch("resources.namespace_exists", return_value=(True, None)) as ns:
+             patch("resources.check_namespace_present", return_value=(True, None)) as ns:
             self.cloudsql = cloudsql
             self.nodepool = nodepool
             self.ingress = ingress
             self.static_ips = static_ips
             self.psc = psc
-            self.namespace_exists = ns
+            self.check_namespace_present = ns
             yield
 
     def test_gke_unavailable_skips_only_kubectl_checks(self):
@@ -417,13 +417,13 @@ class TestCheckEnvironment:
         スキップ。nodepool チェックは gcloud API 直叩きで kubectl 認証に依存しない
         ため独立に実行される。
         """
-        check_environment("dev", "proj", gke_available=False)
+        check_environment("dev", "proj", is_gke_available=False)
         self.cloudsql.assert_called_once()
         self.nodepool.assert_called_once()
         self.static_ips.assert_called_once()
         self.psc.assert_called_once()
         # kubectl 系のみスキップ
-        self.namespace_exists.assert_not_called()
+        self.check_namespace_present.assert_not_called()
         self.ingress.assert_not_called()
 
     def test_missing_namespace_skips_ingress_check(self):
@@ -431,7 +431,7 @@ class TestCheckEnvironment:
 
         nodepool は namespace に依存しないので独立に呼ばれる。
         """
-        self.namespace_exists.return_value = (False, None)
+        self.check_namespace_present.return_value = (False, None)
         costs, errors = check_environment("dev", "proj")
         self.ingress.assert_not_called()
         # namespace 非依存のチェックは全て呼ばれる
@@ -446,7 +446,7 @@ class TestCheckEnvironment:
 
         認証失敗等の重大エラーを silent に「namespace 無し」扱いしないための仕様。
         """
-        self.namespace_exists.return_value = (False, "認証失敗 (詳細はログ)")
+        self.check_namespace_present.return_value = (False, "認証失敗 (詳細はログ)")
         costs, errors = check_environment("dev", "proj")
         assert "認証失敗 (詳細はログ)" in errors
         # エラー時は kubectl 依存の Ingress を呼ばない (二次障害を避ける)
@@ -561,13 +561,13 @@ class TestNamespaceExists:
     def test_success_returns_true_none(self):
         """観点: returncode=0 なら (True, None)。"""
         with patch("resources.subprocess.run", return_value=_subprocess_result(0)):
-            assert namespace_exists("dev") == (True, None)
+            assert check_namespace_present("dev") == (True, None)
 
     def test_not_found_in_stderr_is_silent_skip(self):
         """観点: stderr に NotFound → (False, None) で正常スキップ。"""
         stderr = 'Error from server (NotFound): namespaces "dev" not found'
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr=stderr)):
-            assert namespace_exists("dev") == (False, None)
+            assert check_namespace_present("dev") == (False, None)
 
     def test_not_found_in_stdout_only_is_also_silent_skip(self):
         """観点: stderr が空で stdout 側に NotFound が出るケースでも拾う（combined 判定の仕様）。
@@ -576,7 +576,7 @@ class TestNamespaceExists:
         silent failure にならないための仕様固定。
         """
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr="", stdout="NotFound")):
-            assert namespace_exists("dev") == (False, None)
+            assert check_namespace_present("dev") == (False, None)
 
     def test_permission_denied_is_not_silent(self):
         """観点: permission denied を NotFound と誤判定せず、エラー詳細を返す。
@@ -586,7 +586,7 @@ class TestNamespaceExists:
         この silent 化を絶対に作らないための固定テスト。
         """
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr="permission denied")):
-            ok, err = namespace_exists("dev")
+            ok, err = check_namespace_present("dev")
         assert ok is False
         assert err is not None
         assert "dev" in err
@@ -600,14 +600,14 @@ class TestNamespaceExists:
         「空 stderr を NotFound 扱い」する silent failure が紛れる。
         """
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr="", stdout="")):
-            ok, err = namespace_exists("dev")
+            ok, err = check_namespace_present("dev")
         assert ok is False
         assert err is not None
 
     def test_failure_logs_detail(self, capsys):
         """観点: 非 NotFound エラーの詳細が print で Actions ログに残る。"""
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr="specific RBAC failure")):
-            namespace_exists("dev")
+            check_namespace_present("dev")
         captured = capsys.readouterr()
         assert "specific RBAC failure" in captured.out
 
@@ -697,14 +697,14 @@ class TestCheckCommandErrorPaths:
     """各 check_* 関数が CommandError を受け取った時、Slack に届く errors に
     意味のあるメッセージを積むことを固定する。
 
-    既存テストは `check.gcloud` / `check.kubectl_json` の return_value を
+    既存テストは `run_gcloud` / `run_kubectl_json` の return_value を
     差し替えていて、CommandError 例外パスを通っていない。呼び出し側の
     except 節の存在と、積まれる文字列の質を直接検証する。
     """
 
     def test_check_cloudsql_commanderror_produces_readable_message(self):
         from resources import check_cloudsql
-        with patch("resources.gcloud_value", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
+        with patch("resources.run_gcloud_value", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_cloudsql("proj")
         assert costs == []
         assert len(errors) == 1
@@ -712,7 +712,7 @@ class TestCheckCommandErrorPaths:
         assert "gcloud 実行失敗" in errors[0]
 
     def test_check_ingress_commanderror_produces_readable_message(self):
-        with patch("resources.kubectl_json", side_effect=CommandError("kubectl 実行失敗 (exit 1)")):
+        with patch("resources.run_kubectl_json", side_effect=CommandError("kubectl 実行失敗 (exit 1)")):
             costs, errors = check_ingress("dev")
         assert costs == []
         assert len(errors) == 1
@@ -720,14 +720,14 @@ class TestCheckCommandErrorPaths:
         assert "kubectl" in errors[0]
 
     def test_check_static_ips_commanderror_produces_readable_message(self):
-        with patch("resources.gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
+        with patch("resources.run_gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_static_ips("proj")
         assert costs == []
         assert len(errors) == 1
         assert "外部 IP" in errors[0]
 
     def test_check_psc_commanderror_produces_readable_message(self):
-        with patch("resources.gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
+        with patch("resources.run_gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_psc("proj")
         assert costs == []
         assert len(errors) == 1
@@ -735,7 +735,7 @@ class TestCheckCommandErrorPaths:
 
     def test_check_gke_nodepool_commanderror_produces_readable_message(self):
         """観点: nodepool describe の CommandError が Slack 向けに意味あるメッセージで載る。"""
-        with patch("resources.gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
+        with patch("resources.run_gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_gke_nodepool("dev")
         assert costs == []
         assert len(errors) == 1

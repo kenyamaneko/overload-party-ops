@@ -66,17 +66,17 @@ def _run_cmd(
     return result.stdout.strip()
 
 
-def gcloud(*args: str, allow_not_found: bool = False) -> str:
+def run_gcloud(*args: str, allow_not_found: bool = False) -> str:
     """gcloud コマンドを JSON 出力で実行します。"""
     return _run_cmd(["gcloud", *args, "--format=json"], label="gcloud", allow_not_found=allow_not_found)
 
 
-def gcloud_value(*args: str, allow_not_found: bool = False) -> str:
+def run_gcloud_value(*args: str, allow_not_found: bool = False) -> str:
     """gcloud コマンドをテキスト出力で実行します。"""
     return _run_cmd(["gcloud", *args], label="gcloud", allow_not_found=allow_not_found)
 
 
-def kubectl_json(*args: str, allow_not_found: bool = False) -> str:
+def run_kubectl_json(*args: str, allow_not_found: bool = False) -> str:
     """kubectl コマンドを JSON 出力で実行します。"""
     return _run_cmd(["kubectl", *args, "-o", "json"], label="kubectl", allow_not_found=allow_not_found)
 
@@ -103,7 +103,7 @@ def setup_gke_credentials() -> tuple[bool, str | None]:
 def check_cloudsql(project: str) -> tuple[list[str], list[str]]:
     """Cloud SQL インスタンスの稼働状態を確認します。"""
     try:
-        state = gcloud_value(
+        state = run_gcloud_value(
             "sql", "instances", "describe", CLOUDSQL_INSTANCE,
             "--project", project, "--format=value(state)",
             allow_not_found=True,
@@ -121,24 +121,24 @@ def check_gke_nodepool(env: str) -> tuple[list[str], list[str]]:
     """env 用 GKE node pool の現行ノード数を確認します。"""
     nodepool = f"{GKE_CLUSTER}-{env}"
     try:
-        raw = gcloud(
+        raw = run_gcloud(
             "container", "node-pools", "describe", nodepool,
             "--cluster", GKE_CLUSTER, "--zone", GKE_ZONE, "--project", GKE_PROJECT,
         )
     except CommandError as e:
         return [], [f"Node pool `{nodepool}` チェック失敗: {e}"]
     try:
-        np = json.loads(raw)
+        nodepool_detail = json.loads(raw)
     except json.JSONDecodeError as e:
         return [], [f"Node pool `{nodepool}` JSON パース失敗: {e}"]
-    igs = np.get("instanceGroupUrls", [])
+    igs = nodepool_detail.get("instanceGroupUrls", [])
     if not igs:
         return [], [f"Node pool `{nodepool}` の instanceGroupUrls が空"]
     total_target = 0
     for url in igs:
         ig_name = url.rsplit("/", 1)[-1]
         try:
-            ig_raw = gcloud(
+            ig_raw = run_gcloud(
                 "compute", "instance-groups", "managed", "describe", ig_name,
                 "--zone", GKE_ZONE, "--project", GKE_PROJECT,
             )
@@ -160,7 +160,7 @@ def check_gke_nodepool(env: str) -> tuple[list[str], list[str]]:
 def check_ingress(env: str) -> tuple[list[str], list[str]]:
     """Ingress リソースの稼働状態を確認します。"""
     try:
-        raw = kubectl_json(
+        raw = run_kubectl_json(
             "get", "ingress", "overload-party",
             "-n", env,
             f"--context=gke_{GKE_PROJECT}_{GKE_ZONE}_{GKE_CLUSTER}",
@@ -187,7 +187,7 @@ def check_ingress(env: str) -> tuple[list[str], list[str]]:
 def check_static_ips(project: str) -> tuple[list[str], list[str]]:
     """予約済み外部 IP アドレスを確認します。"""
     try:
-        raw = gcloud(
+        raw = run_gcloud(
             "compute", "addresses", "list",
             "--project", project,
             "--filter", "status=RESERVED AND addressType=EXTERNAL",
@@ -215,7 +215,7 @@ def check_static_ips(project: str) -> tuple[list[str], list[str]]:
 def check_psc(project: str) -> tuple[list[str], list[str]]:
     """PSC forwarding rule の稼働状態を確認します。"""
     try:
-        raw = gcloud(
+        raw = run_gcloud(
             "compute", "forwarding-rules", "list",
             "--project", project,
             "--filter", "target~serviceAttachments",
@@ -237,7 +237,7 @@ def check_psc(project: str) -> tuple[list[str], list[str]]:
     return costs, errors
 
 
-def namespace_exists(env: str) -> tuple[bool, str | None]:
+def check_namespace_present(env: str) -> tuple[bool, str | None]:
     """Kubernetes namespace が存在するか確認します。
 
     戻り値: (存在するか, エラー詳細)。NotFound は (False, None)、
@@ -260,7 +260,7 @@ def namespace_exists(env: str) -> tuple[bool, str | None]:
 
 
 def check_environment(
-    env: str, project: str, *, gke_available: bool = True,
+    env: str, project: str, *, is_gke_available: bool = True,
 ) -> tuple[list[str], list[str]]:
     """指定環境のコスト発生リソースを一括チェックします。"""
     costs: list[str] = []
@@ -272,11 +272,11 @@ def check_environment(
 
     _collect(check_cloudsql(project))
     _collect(check_gke_nodepool(env))
-    if gke_available:
-        ns_ok, ns_err = namespace_exists(env)
+    if is_gke_available:
+        is_namespace_ok, ns_err = check_namespace_present(env)
         if ns_err:
             errors.append(ns_err)
-        if ns_ok:
+        if is_namespace_ok:
             _collect(check_ingress(env))
         elif not ns_err:
             print(f"Namespace '{env}' not found, skipping Ingress check.")

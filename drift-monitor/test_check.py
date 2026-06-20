@@ -14,7 +14,7 @@ from check import (
     load_targets,
     notify_slack,
     parse_plan_json,
-    terraform_plan,
+    run_terraform_plan,
 )
 
 
@@ -438,20 +438,20 @@ class TestTerraformPlan:
     def test_init_failure_returns_1(self):
         """観点: init が失敗したら plan を実行せず (1, detail) を返す。"""
         with patch("check.run", return_value=_proc(1, stderr="init failed")):
-            code, output = terraform_plan("/work")
+            code, output = run_terraform_plan("/work")
         assert code == 1
         assert "init failed" in output
 
     def test_init_failure_does_not_run_plan(self):
         """観点: init 失敗時に plan を叩かない（無駄な API 呼びを防ぐ）。"""
         with patch("check.run", side_effect=[_proc(1, stderr="init failed")]) as run_mock:
-            terraform_plan("/work")
+            run_terraform_plan("/work")
         assert run_mock.call_count == 1
 
     def test_no_drift_returns_0_and_empty_output(self):
         """観点: plan exit 0 → (0, "")。show は呼ばない。"""
         with patch("check.run", side_effect=[_proc(0), _proc(0)]) as run_mock:
-            code, output = terraform_plan("/work")
+            code, output = run_terraform_plan("/work")
         assert code == 0
         assert output == ""
         assert run_mock.call_count == 2
@@ -465,14 +465,14 @@ class TestTerraformPlan:
         with patch("check.run", side_effect=[
             _proc(0), _proc(2), _proc(0, stdout=plan_json),
         ]):
-            code, output = terraform_plan("/work")
+            code, output = run_terraform_plan("/work")
         assert code == 2
         assert output == plan_json
 
     def test_plan_error_returns_1(self):
         """観点: plan が 非0/非2 → (1, detail)。drift とエラーを混同しない。"""
         with patch("check.run", side_effect=[_proc(0), _proc(1, stderr="provider error")]):
-            code, _ = terraform_plan("/work")
+            code, _ = run_terraform_plan("/work")
         assert code == 1
 
     def test_show_failure_returns_1(self):
@@ -484,7 +484,7 @@ class TestTerraformPlan:
         with patch("check.run", side_effect=[
             _proc(0), _proc(2), _proc(1, stderr="show failed"),
         ]):
-            code, output = terraform_plan("/work")
+            code, output = run_terraform_plan("/work")
         assert code == 1
         assert "show failed" in output
 
@@ -494,7 +494,7 @@ class TestTerraformPlan:
             _proc(0),
             _proc(1, stdout="stdout content", stderr="stderr detail"),
         ]):
-            _, output = terraform_plan("/work")
+            _, output = run_terraform_plan("/work")
         assert "stderr detail" in output
 
 
@@ -579,14 +579,14 @@ def _run_main_with_plan_result(
          patch("check.clone_repo", return_value="/tmp/r"), \
          patch("check.os.makedirs"), \
          patch("check.os.path.isdir", return_value=True), \
-         patch("check.terraform_plan", return_value=(plan_exit_code, plan_output)), \
+         patch("check.run_terraform_plan", return_value=(plan_exit_code, plan_output)), \
          patch("check.notify_slack", side_effect=fake_notify):
         check.main()
     return captured
 
 
 class TestMainErrorPropagation:
-    """terraform_plan のエラーが Slack 通知まで届くことを end-to-end で検証する。
+    """run_terraform_plan のエラーが Slack 通知まで届くことを end-to-end で検証する。
 
     個々のユニットテストは戻り値までしか見ないため、main() の errors 積み込みや
     メッセージ組み立てで detail が欠落しても検知できない。ユーザーが異常に気付ける
@@ -594,7 +594,7 @@ class TestMainErrorPropagation:
     """
 
     def test_plan_error_detail_reaches_slack(self):
-        """観点: terraform_plan が返した error detail が Slack payload に載る。"""
+        """観点: run_terraform_plan が返した error detail が Slack payload に載る。"""
         result = _run_main_with_plan_result(1, "provider auth failed: 401")
         assert result["called"] is True
         assert "plan 実行エラー" in result["message"]
