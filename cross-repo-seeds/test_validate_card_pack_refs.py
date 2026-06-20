@@ -113,21 +113,11 @@ class TestFormatFailureMessage:
 class TestFormatSuccessMessage:
     """Slack 成功通知の整形仕様."""
 
-    def test_includes_counts_and_ok_marker(self):
-        msg = v._format_success_message(3, 5, run_url="")
+    def test_conveys_only_that_check_passed(self):
+        """観点: 成功通知は通過したことだけを示す短文にする (件数や URL は載せない)."""
+        msg = v._format_success_message()
         assert ":white_check_mark:" in msg
         assert "card_pack 参照整合 OK" in msg
-        assert "3 商品" in msg
-        assert "5 pack" in msg
-
-    def test_includes_actions_run_url_when_available(self):
-        msg = v._format_success_message(1, 1, run_url="https://github.com/org/repo/actions/runs/1")
-        assert "<https://github.com/org/repo/actions/runs/1|GitHub Actions ログ>" in msg
-
-    def test_omits_url_block_when_run_url_empty(self):
-        msg = v._format_success_message(1, 1, run_url="")
-        # 空 run_url 時は URL line を出さない (ローカル実行を仮定)
-        assert "GitHub Actions ログ" not in msg
 
 
 class TestMainIntegration:
@@ -140,7 +130,7 @@ class TestMainIntegration:
         _write_yaml(card, {"packs": card_packs})
         return shop, card
 
-    def test_valid_refs_with_webhook_notifies_success(self, tmp_path: Path, capsys, monkeypatch):
+    def test_valid_refs_notifies_success(self, tmp_path: Path, capsys, monkeypatch):
         """観点: 全参照が有効なら exit 0 で成功メッセージを Slack に送る."""
         shop, card = self._write_pair(
             tmp_path,
@@ -157,19 +147,7 @@ class TestMainIntegration:
         assert "card_pack 参照整合 OK" in msg
         assert "OK" in capsys.readouterr().out
 
-    def test_valid_refs_without_webhook_skips_slack(self, tmp_path: Path, capsys, monkeypatch):
-        """観点: 成功でも SLACK_WEBHOOK_URL 未設定なら送信せずスキップ (ローカル実行)."""
-        shop, card = self._write_pair(
-            tmp_path,
-            [{"product_id": "fs_she", "type": "faction_set", "card_pack_id": "faction_set_she"}],
-            [{"pack_id": "faction_set_she", "cards": []}],
-        )
-        monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
-        with patch.dict(os.environ, {}, clear=True), patch("slack_notifier.post_to_slack") as slack:
-            assert v.main() == 0
-        slack.assert_not_called()
-
-    def test_missing_refs_with_webhook_notifies_failure(self, tmp_path: Path, capsys, monkeypatch):
+    def test_missing_refs_notifies_failure(self, tmp_path: Path, capsys, monkeypatch):
         """観点: 不整合があれば exit 1 で失敗詳細を Slack に送る."""
         shop, card = self._write_pair(
             tmp_path,
@@ -186,16 +164,17 @@ class TestMainIntegration:
         assert "fs_ghost" in msg
         assert "faction_set_ghost" in msg
 
-    def test_missing_refs_without_webhook_skips_slack(self, tmp_path: Path, capsys, monkeypatch):
-        """観点: 不整合でも SLACK_WEBHOOK_URL 未設定なら送信せず exit 1 のみ (ローカル実行を許容)."""
+    def test_missing_webhook_exits_with_error(self, tmp_path: Path, capsys, monkeypatch):
+        """観点: SLACK_WEBHOOK_URL 未設定は通知経路が無い異常として exit 1 で落とす (他 Slack ジョブと同仕様)."""
         shop, card = self._write_pair(
             tmp_path,
-            [{"product_id": "fs_ghost", "type": "faction_set", "card_pack_id": "faction_set_ghost"}],
-            [{"pack_id": "basic", "cards": []}],
+            [{"product_id": "fs_she", "type": "faction_set", "card_pack_id": "faction_set_she"}],
+            [{"pack_id": "faction_set_she", "cards": []}],
         )
         monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
         with patch.dict(os.environ, {}, clear=True), patch("slack_notifier.post_to_slack") as slack:
-            assert v.main() == 1
+            with pytest.raises(SystemExit) as exc:
+                v.main()
+        assert exc.value.code == 1
         slack.assert_not_called()
-        err = capsys.readouterr().err
-        assert "SLACK_WEBHOOK_URL is not set" in err
+        assert "SLACK_WEBHOOK_URL is not set" in capsys.readouterr().err

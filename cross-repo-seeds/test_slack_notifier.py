@@ -6,6 +6,8 @@ import json
 import os
 from unittest.mock import patch
 
+import pytest
+
 import slack_notifier as sn
 
 
@@ -56,18 +58,18 @@ class TestPostToSlack:
         assert len(sent) == sn.SLACK_TEXT_LIMIT + len("\n…(truncated)")
 
 
-class TestNotifyIfConfigured:
-    """SLACK_WEBHOOK_URL の有無による送信ゲートの仕様."""
+class TestRequireWebhookUrl:
+    """SLACK_WEBHOOK_URL 必須チェックの仕様."""
 
-    def test_posts_when_webhook_configured(self):
-        with patch.dict(os.environ, {"SLACK_WEBHOOK_URL": "https://hooks.slack.com/x"}, clear=True), \
-             patch("slack_notifier.post_to_slack") as post:
-            sn.notify_if_configured("msg")
-        post.assert_called_once_with("https://hooks.slack.com/x", "msg")
+    def test_returns_url_when_configured(self):
+        """観点: SLACK_WEBHOOK_URL 設定済みならその値をそのまま返す."""
+        with patch.dict(os.environ, {"SLACK_WEBHOOK_URL": "https://hooks.slack.com/x"}, clear=True):
+            assert sn.require_webhook_url() == "https://hooks.slack.com/x"
 
-    def test_skips_when_webhook_unset(self, capsys):
-        """観点: webhook 未設定なら送信せず stderr に記録のみ (ローカル実行を許容)."""
-        with patch.dict(os.environ, {}, clear=True), patch("slack_notifier.post_to_slack") as post:
-            sn.notify_if_configured("msg")
-        post.assert_not_called()
+    def test_exits_with_error_when_unset(self, capsys):
+        """観点: webhook 未設定は通知経路が無い異常として exit 1 で落とす (silent skip しない)."""
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(SystemExit) as exc:
+                sn.require_webhook_url()
+        assert exc.value.code == 1
         assert "SLACK_WEBHOOK_URL is not set" in capsys.readouterr().err

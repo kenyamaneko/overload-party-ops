@@ -61,7 +61,15 @@ def find_missing(shop_refs: dict[str, str], card_pack_ids: set[str]) -> list[tup
 
 
 def _format_failure_message(missing: list[tuple[str, str]], run_url: str) -> str:
-    """Slack 失敗通知の本文を組み立てる."""
+    """Slack 失敗通知の本文を組み立てる.
+
+    Args:
+        missing: card 側に存在しない (product_id, card_pack_id) の一覧。
+        run_url: GitHub Actions run の URL。空なら URL 行を省く。
+
+    Returns:
+        Slack に送る失敗通知の本文。
+    """
     lines = [
         f":x: *[card_pack 参照整合 失敗]* shop の card_pack_id 参照 {len(missing)} 件が card 側に存在しません。",
     ]
@@ -73,37 +81,38 @@ def _format_failure_message(missing: list[tuple[str, str]], run_url: str) -> str
     return "\n".join(lines)
 
 
-def _format_success_message(shop_ref_count: int, card_pack_count: int, run_url: str) -> str:
-    """Slack 成功通知の本文を組み立てる."""
-    lines = [
-        f":white_check_mark: *[card_pack 参照整合 OK]* shop の {shop_ref_count} 商品すべてが "
-        f"有効な card_pack_id を参照しています (card は {card_pack_count} pack 定義)。",
-    ]
-    if run_url:
-        lines.append(f"<{run_url}|GitHub Actions ログ>")
-    return "\n".join(lines)
+def _format_success_message() -> str:
+    """Slack 成功通知の本文を組み立てる.
+
+    Returns:
+        Slack に送る成功通知の本文。
+    """
+    return ":white_check_mark: *[card_pack 参照整合 OK]*"
 
 
 def main() -> int:
-    """エントリポイント。"""
+    """エントリポイント。
+
+    Returns:
+        プロセス終了コード (0=参照整合, 1=不整合検出)。
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--shop-yaml", type=Path, required=True, help="overload-party-shop/data/products.yaml")
     parser.add_argument("--card-yaml", type=Path, required=True, help="overload-party-card/data/card_packs.yaml")
     args = parser.parse_args()
 
+    webhook_url = slack_notifier.require_webhook_url()
+
     shop_refs = load_shop_card_pack_refs(args.shop_yaml)
     card_pack_ids = load_card_pack_ids(args.card_yaml)
     missing = find_missing(shop_refs, card_pack_ids)
-    run_url = slack_notifier.build_actions_run_url()
 
     if not missing:
         print(
             f"OK: {len(shop_refs)} shop product(s) all reference valid card_pack_id "
             f"(card defines {len(card_pack_ids)} pack(s))"
         )
-        slack_notifier.notify_if_configured(
-            _format_success_message(len(shop_refs), len(card_pack_ids), run_url)
-        )
+        slack_notifier.post_to_slack(webhook_url, _format_success_message())
         return 0
 
     sys.stderr.write(
@@ -113,7 +122,8 @@ def main() -> int:
     for product_id, pack_id in missing:
         sys.stderr.write(f"  - shop product {product_id!r} → card_pack_id {pack_id!r}\n")
 
-    slack_notifier.notify_if_configured(_format_failure_message(missing, run_url))
+    run_url = slack_notifier.build_actions_run_url()
+    slack_notifier.post_to_slack(webhook_url, _format_failure_message(missing, run_url))
     return 1
 
 

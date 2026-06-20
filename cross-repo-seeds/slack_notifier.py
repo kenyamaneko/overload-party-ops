@@ -15,7 +15,11 @@ SLACK_TEXT_LIMIT = 40000
 
 
 def build_actions_run_url() -> str:
-    """GitHub Actions 実行中なら当該 run の URL を返します。ローカル実行時は空文字。"""
+    """GitHub Actions 実行中なら当該 run の URL を返します。
+
+    Returns:
+        当該 run の URL。GITHUB_* 環境変数が揃わないローカル実行時は空文字。
+    """
     server = os.environ.get("GITHUB_SERVER_URL", "").rstrip("/")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     run_id = os.environ.get("GITHUB_RUN_ID", "")
@@ -25,7 +29,12 @@ def build_actions_run_url() -> str:
 
 
 def post_to_slack(webhook_url: str, message: str) -> None:
-    """Slack Webhook にメッセージを送信します。"""
+    """Slack Webhook にメッセージを送信します。
+
+    Args:
+        webhook_url: 送信先の Slack Incoming Webhook URL。
+        message: 送信本文。SLACK_TEXT_LIMIT を超える分は末尾を切り詰める。
+    """
     if len(message) > SLACK_TEXT_LIMIT:
         message = message[:SLACK_TEXT_LIMIT] + "\n…(truncated)"
     payload = json.dumps({"text": message}).encode()
@@ -41,10 +50,14 @@ def post_to_slack(webhook_url: str, message: str) -> None:
         sys.exit(1)
 
 
-def notify_if_configured(message: str) -> None:
-    """SLACK_WEBHOOK_URL が設定されていれば message を Slack に通知します。"""
+def require_webhook_url() -> str:
+    """SLACK_WEBHOOK_URL を返します。未設定なら通知経路が無い異常としてエラー終了します。
+
+    Returns:
+        環境変数 SLACK_WEBHOOK_URL の値。
+    """
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "")
     if not webhook_url:
-        print("SLACK_WEBHOOK_URL is not set, skipping Slack notification", file=sys.stderr)
-        return
-    post_to_slack(webhook_url, message)
+        print("Error: SLACK_WEBHOOK_URL is not set", file=sys.stderr)
+        sys.exit(1)
+    return webhook_url
