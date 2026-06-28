@@ -199,22 +199,24 @@ class TestParseSchemaQualifiedTableNames:
         assert tables["users"] == {"id", "name"}
 
 
-class TestExtractColumnsQuotedIdentifiers:
-    """引用符付きカラム名を予約語衝突回避の識別子として抽出する仕様。"""
+class TestExtractColumnsIdentifierFolding:
+    """PostgreSQL の識別子畳み込みに合わせてカラム名を正規化する仕様。"""
 
     @pytest.mark.parametrize(
         "definition,expected",
         [
             ('"order" INTEGER', "order"),
-            ('"Order" INTEGER', "order"),
+            ('"Order" INTEGER', "Order"),
             ('"group" TEXT NOT NULL', "group"),
+            ("Users INTEGER", "users"),
+            ("created_at TIMESTAMP", "created_at"),
         ],
     )
-    def test_quoted_identifier_is_unquoted_and_lowercased(self, definition, expected):
-        """観点: 引用符付きカラムは引用符を外し小文字化した名前で抽出される。
+    def test_quoted_preserves_case_unquoted_is_lowercased(self, definition, expected):
+        """観点: 引用符付き識別子は大小を保持し、引用符なしは小文字へ畳む (PostgreSQL の識別子規則)。
 
         Args:
-            definition: 1 カラム分の DDL 断片（引用符付き識別子を含む）。
+            definition: 1 カラム分の DDL 断片。
             expected: 抽出されるべき正規化後カラム名。
         """
         columns = _extract_columns(definition)
