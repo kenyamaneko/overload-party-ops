@@ -2,7 +2,7 @@
 import tempfile
 import os
 import pytest
-from schema_check import parse_schema, check, main, _extract_columns
+from schema_check import parse_schema, check, main
 
 
 def _write_schema(tmp_path, name: str, content: str) -> str:
@@ -199,11 +199,11 @@ class TestParseSchemaQualifiedTableNames:
         assert tables["users"] == {"id", "name"}
 
 
-class TestExtractColumnsIdentifierFolding:
+class TestParseSchemaIdentifierFolding:
     """PostgreSQL の識別子畳み込みに合わせてカラム名を正規化する仕様。"""
 
     @pytest.mark.parametrize(
-        "definition,expected",
+        "column_definition,expected",
         [
             ('"order" INTEGER', "order"),
             ('"Order" INTEGER', "Order"),
@@ -212,15 +212,15 @@ class TestExtractColumnsIdentifierFolding:
             ("created_at TIMESTAMP", "created_at"),
         ],
     )
-    def test_quoted_preserves_case_unquoted_is_lowercased(self, definition, expected):
+    def test_quoted_preserves_case_unquoted_is_lowercased(self, column_definition, expected):
         """観点: 引用符付き識別子は大小を保持し、引用符なしは小文字へ畳む (PostgreSQL の識別子規則)。
 
         Args:
-            definition: 1 カラム分の DDL 断片。
-            expected: 抽出されるべき正規化後カラム名。
+            column_definition: CREATE TABLE に含める 1 カラム分の DDL 断片。
+            expected: パース結果に現れるべき正規化後カラム名。
         """
-        columns = _extract_columns(definition)
-        assert columns == {expected}
+        tables = parse_schema(f"CREATE TABLE t ({column_definition});")
+        assert tables["t"] == {expected}
 
 
 class TestCheckMultipleDestructiveChanges:
