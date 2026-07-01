@@ -390,22 +390,27 @@ class TestCheckPsc:
         assert len(errors) == 1
 
 
+# 経路の実行/スキップを「どの関数を呼んだか」ではなく観測可能な戻り値で検証するためのマーカー。
+_CLOUDSQL_COST = "marker: cloudsql"
+_NODEPOOL_COST = "marker: nodepool"
+_INGRESS_COST = "marker: ingress"
+_STATIC_IPS_COST = "marker: static_ips"
+_PSC_COST = "marker: psc"
+
+
 class TestCheckEnvironment:
     """環境単位の総合チェックの分岐仕様。"""
 
     @pytest.fixture(autouse=True)
     def _patches(self):
-        with patch("resources.check_cloudsql", return_value=([], [])) as cloudsql, \
-             patch("resources.check_gke_nodepool", return_value=([], [])) as nodepool, \
-             patch("resources.check_ingress", return_value=([], [])) as ingress, \
-             patch("resources.check_static_ips", return_value=([], [])) as static_ips, \
-             patch("resources.check_psc", return_value=([], [])) as psc, \
+        with patch("resources.check_cloudsql", return_value=([_CLOUDSQL_COST], [])) as cloudsql, \
+             patch("resources.check_gke_nodepool", return_value=([_NODEPOOL_COST], [])) as nodepool, \
+             patch("resources.check_ingress", return_value=([_INGRESS_COST], [])), \
+             patch("resources.check_static_ips", return_value=([_STATIC_IPS_COST], [])), \
+             patch("resources.check_psc", return_value=([_PSC_COST], [])), \
              patch("resources.check_namespace_present", return_value=(True, None)) as ns:
             self.cloudsql = cloudsql
             self.nodepool = nodepool
-            self.ingress = ingress
-            self.static_ips = static_ips
-            self.psc = psc
             self.check_namespace_present = ns
             yield
 
@@ -417,14 +422,12 @@ class TestCheckEnvironment:
         スキップ。nodepool チェックは gcloud API 直叩きで kubectl 認証に依存しない
         ため独立に実行される。
         """
-        check_environment("dev", "proj", is_gke_available=False)
-        self.cloudsql.assert_called_once()
-        self.nodepool.assert_called_once()
-        self.static_ips.assert_called_once()
-        self.psc.assert_called_once()
-        # kubectl 系のみスキップ
-        self.check_namespace_present.assert_not_called()
-        self.ingress.assert_not_called()
+        costs, _ = check_environment("dev", "proj", is_gke_available=False)
+        assert _INGRESS_COST not in costs
+        assert _CLOUDSQL_COST in costs
+        assert _NODEPOOL_COST in costs
+        assert _STATIC_IPS_COST in costs
+        assert _PSC_COST in costs
 
     def test_missing_namespace_skips_ingress_check(self):
         """観点: namespace が存在しなければ kubectl 依存の Ingress のみスキップする。
@@ -433,12 +436,11 @@ class TestCheckEnvironment:
         """
         self.check_namespace_present.return_value = (False, None)
         costs, errors = check_environment("dev", "proj")
-        self.ingress.assert_not_called()
-        # namespace 非依存のチェックは全て呼ばれる
-        self.cloudsql.assert_called_once()
-        self.nodepool.assert_called_once()
-        self.static_ips.assert_called_once()
-        self.psc.assert_called_once()
+        assert _INGRESS_COST not in costs
+        assert _CLOUDSQL_COST in costs
+        assert _NODEPOOL_COST in costs
+        assert _STATIC_IPS_COST in costs
+        assert _PSC_COST in costs
         assert errors == []
 
     def test_namespace_check_error_is_propagated(self):
@@ -450,16 +452,16 @@ class TestCheckEnvironment:
         costs, errors = check_environment("dev", "proj")
         assert "認証失敗 (詳細はログ)" in errors
         # エラー時は kubectl 依存の Ingress を呼ばない (二次障害を避ける)
-        self.ingress.assert_not_called()
+        assert _INGRESS_COST not in costs
 
     def test_all_checks_run_when_namespace_exists(self):
         """観点: namespace がある正常ケースでは全チェックが実行される。"""
-        check_environment("dev", "proj")
-        self.cloudsql.assert_called_once()
-        self.nodepool.assert_called_once()
-        self.ingress.assert_called_once()
-        self.static_ips.assert_called_once()
-        self.psc.assert_called_once()
+        costs, _ = check_environment("dev", "proj")
+        assert _CLOUDSQL_COST in costs
+        assert _NODEPOOL_COST in costs
+        assert _INGRESS_COST in costs
+        assert _STATIC_IPS_COST in costs
+        assert _PSC_COST in costs
 
     def test_costs_and_errors_are_merged(self):
         """観点: 各チェックの costs/errors が集約されて返る。"""
@@ -675,11 +677,13 @@ class TestLoadEnvironments:
 class TestNotifySlack:
     """Slack 通知の失敗時挙動。通知経路そのもののテスト。"""
 
-    def test_success_calls_urlopen(self):
-        """観点: 正常時に urllib.request.urlopen を 1 回呼ぶ。"""
+    def test_sends_message_as_slack_text_payload(self):
+        """観点: 正常時に渡したメッセージを Slack の text ペイロードとして webhook へ送る。"""
         with patch("check.urllib.request.urlopen") as urlopen:
-            notify_slack("https://webhook", "msg")
-        urlopen.assert_called_once()
+            notify_slack("https://webhook", "コスト警告メッセージ")
+        sent_request = urlopen.call_args.args[0]
+        assert sent_request.full_url == "https://webhook"
+        assert json.loads(sent_request.data.decode()) == {"text": "コスト警告メッセージ"}
 
     def test_failure_exits_1(self):
         """観点: Slack 通知失敗は sys.exit(1) でプロセス失敗にする。

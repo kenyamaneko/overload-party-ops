@@ -13,7 +13,14 @@ CONSTRAINT_KEYWORDS = {
 
 
 def _extract_columns(body: str) -> set[str]:
-    """CREATE TABLE 本体からカラム名を抽出します。"""
+    """CREATE TABLE 本体からカラム名を抽出します。
+
+    Args:
+        body: CREATE TABLE の括弧内の本体テキスト。
+
+    Returns:
+        正規化済みのカラム名集合。
+    """
     columns: set[str] = set()
     for line in body.split(","):
         line = line.strip()
@@ -24,7 +31,8 @@ def _extract_columns(body: str) -> set[str]:
         if ident.upper() in CONSTRAINT_KEYWORDS:
             continue
         if re.match(r"^\"?\w+\"?$", first_token):
-            columns.add(ident.lower())
+            # PostgreSQL は引用符なし識別子を小文字へ畳み、引用符付きは大小を保持する。
+            columns.add(ident if first_token.startswith('"') else ident.lower())
     return columns
 
 
