@@ -8,7 +8,8 @@ Overload Party の運用ジョブ・サービスをまとめたリポジトリ�
 
 | ジョブ | 説明 | スケジュール |
 |---|---|---|
-| [nightly-shutdown](nightly-shutdown/README.md) | dev 環境のリソース停止（コスト削減） | 毎日 2:00 JST (`0 17 * * *` UTC) |
+| [nightly-shutdown](nightly-shutdown/README.md) | dev / stg 環境のリソース停止（コスト削減） | 毎日 2:00 JST (`0 17 * * *` UTC) |
+| [cross-repo-seeds](cross-repo-seeds/README.md) | shop / card seed YAML の参照整合検証 → Slack 通知 | 毎日 3:00 JST (`0 18 * * *` UTC) |
 | [drift-monitor](drift-monitor/README.md) | Terraform plan による drift 検出 → Slack 通知 | 毎日 7:00 JST (`0 22 * * *` UTC) |
 | [cost-monitor](cost-monitor/README.md) | dev/stg のコスト発生リソース検出 → Slack 通知 | 毎日 8:00 / 14:00 / 20:00 JST (`0 23,5,11 * * *` UTC) |
 

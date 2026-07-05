@@ -1,6 +1,6 @@
 # Nightly Shutdown
 
-dev 環境のリソースを毎晩自動停止し、コストを削減するスケジューラ。
+dev / stg 環境のリソースを毎晩自動停止し、コストを削減するスケジューラ。
 
 ## 実装方針
 
@@ -32,5 +32,5 @@ Slack コマンド `/gke-up <env>` / `/db-start <env>` でも実行可能。
 
 | 種別 | 名前 | 用途 |
 |---|---|---|
-| Secret | `K8S_DISPATCH` | `overload-party-k8s` に対する Actions: write 権限の fine-grained PAT |
-| Secret | `INFRA_DISPATCH` | `overload-party-infra` に対する Actions: write 権限の fine-grained PAT |
+| Variable | `OPS_AUTOMATION_APP_ID` | dispatch 用 GitHub App (Ops Automation) の App ID |
+| Secret | `OPS_AUTOMATION_APP_PRIVATE_KEY` | 同 App の秘密鍵。短命 token を発行し dispatch に使用 |

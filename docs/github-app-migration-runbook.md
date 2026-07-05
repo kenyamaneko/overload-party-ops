@@ -116,7 +116,7 @@ ops リポの secret / variable に以下を登録する。
 
 `.github/workflows/drift-monitor.yaml` の `Run drift check` step 直前に App token 取得 step を追加し、`GITHUB_TOKEN` に App token を流す。
 
-**変更前** ([drift-monitor.yaml:39-47](.github/workflows/drift-monitor.yaml#L39)):
+**変更前** ([drift-monitor.yaml:39-47](../.github/workflows/drift-monitor.yaml#L39)):
 
 ```yaml
       - name: Run drift check
@@ -152,7 +152,7 @@ ops リポの secret / variable に以下を登録する。
 
 dispatch 用 step が 2 つあるため、両方を App token に切り替える。token は両 step で共通の 1 つでよい (job の頭で取得)。
 
-**変更前** ([nightly-shutdown.yaml:38-58](.github/workflows/nightly-shutdown.yaml#L38)):
+**変更前** ([nightly-shutdown.yaml:38-58](../.github/workflows/nightly-shutdown.yaml#L38)):
 
 ```yaml
       - name: Dispatch env-lifecycle down
@@ -202,7 +202,7 @@ dispatch 用 step が 2 つあるため、両方を App token に切り替える
 
 `fetch-schemas.py` と `build-previous-schema-union.sh` に `DB_MIGRATE_TOKEN` env として渡しているので、両方を App token に切り替える。
 
-**変更前** ([db-migrate.yaml:75-88](.github/workflows/db-migrate.yaml#L75)):
+**変更前** ([db-migrate.yaml:75-88](../.github/workflows/db-migrate.yaml#L75)):
 
 ```yaml
       - name: Build schema union (current HEAD of schemas.lock.yaml)
@@ -272,7 +272,7 @@ revoke 後 24 時間 (or 適切な観測期間) は workflow を見て予期せ�
 ## 完了条件
 
 - [ ] Ops Automation App / Common Read App が組織にインストール済み
-- [ ] ops リポに `OPS_AUTOMATION_APP_ID` / `OPS_AUTOMATION_APP_PRIVATE_KEY` / `GO_MODULES_APP_ID` / `GO_MODULES_APP_PRIVATE_KEY` 登録済み
+- [ ] ops リポに `OPS_AUTOMATION_APP_ID` / `OPS_AUTOMATION_APP_PRIVATE_KEY` / `CROSS_REPO_DEPS_APP_ID` / `CROSS_REPO_DEPS_APP_PRIVATE_KEY` 登録済み
 - [ ] PR-1, PR-2, PR-3 マージ済みで本番運用が green
 - [ ] 旧 PAT secret 4 種を ops リポから削除済み
 - [ ] 個人 PAT 4 種を revoke 済み
