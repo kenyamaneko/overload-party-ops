@@ -21,8 +21,8 @@ def _write_schema(tmp_path, name: str, content: str) -> str:
     return str(path)
 
 
-class TestParseSchema:
-    def test_basic_table(self):
+class TestスキーマDDLのパース:
+    def test_基本的なテーブルのカラムを抽出する(self):
         sql = """
         CREATE TABLE users (
             id SERIAL PRIMARY KEY,
@@ -34,7 +34,7 @@ class TestParseSchema:
         assert "users" in tables
         assert tables["users"] == {"id", "name", "email"}
 
-    def test_multiple_tables(self):
+    def test_複数テーブルをそれぞれ抽出する(self):
         sql = """
         CREATE TABLE games (
             id SERIAL PRIMARY KEY,
@@ -50,7 +50,7 @@ class TestParseSchema:
         assert "games" in tables
         assert "players" in tables
 
-    def test_constraint_keywords_excluded(self):
+    def test_制約キーワードはカラムに含めない(self):
         sql = """
         CREATE TABLE orders (
             id SERIAL PRIMARY KEY,
@@ -64,7 +64,7 @@ class TestParseSchema:
         assert "user_id" in tables["orders"]
         assert len(tables["orders"]) == 2
 
-    def test_check_constraint_with_commas(self):
+    def test_CHECK制約内のカンマでカラムを誤分割しない(self):
         sql = """
         CREATE TABLE player_factions (
             id SERIAL PRIMARY KEY,
@@ -75,11 +75,11 @@ class TestParseSchema:
         assert "id" in tables["player_factions"]
         assert "faction" in tables["player_factions"]
 
-    def test_empty_schema(self):
+    def test_空スキーマは空dictになる(self):
         tables = parse_schema("")
         assert tables == {}
 
-    def test_case_insensitive(self):
+    def test_大文字小文字を問わずパースする(self):
         sql = """
         create table Users (
             ID serial primary key,
@@ -92,14 +92,14 @@ class TestParseSchema:
         assert "name" in tables["users"]
 
 
-class TestCheck:
+class Test破壊的変更の検出:
     def _write_temp(self, content: str) -> str:
         f = tempfile.NamedTemporaryFile(mode="w", suffix=".sql", delete=False)
         f.write(content)
         f.close()
         return f.name
 
-    def test_no_changes(self):
+    def test_変更が無ければ警告は空(self):
         sql = "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);"
         old = self._write_temp(sql)
         new = self._write_temp(sql)
@@ -110,7 +110,7 @@ class TestCheck:
             os.unlink(old)
             os.unlink(new)
 
-    def test_add_column(self):
+    def test_カラム追加は警告しない(self):
         old_sql = "CREATE TABLE users (id SERIAL PRIMARY KEY);"
         new_sql = "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);"
         old = self._write_temp(old_sql)
@@ -122,7 +122,7 @@ class TestCheck:
             os.unlink(old)
             os.unlink(new)
 
-    def test_drop_column(self):
+    def test_カラム削除はDROP_COLUMN警告になる(self):
         old_sql = "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT, email TEXT);"
         new_sql = "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);"
         old = self._write_temp(old_sql)
@@ -135,7 +135,7 @@ class TestCheck:
             os.unlink(old)
             os.unlink(new)
 
-    def test_drop_table(self):
+    def test_テーブル削除はDROP_TABLE警告になる(self):
         old_sql = """
         CREATE TABLE users (id SERIAL PRIMARY KEY);
         CREATE TABLE logs (id SERIAL PRIMARY KEY);
@@ -151,7 +151,7 @@ class TestCheck:
             os.unlink(old)
             os.unlink(new)
 
-    def test_empty_old_schema(self):
+    def test_旧スキーマが空なら警告しない(self):
         old_sql = ""
         new_sql = "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);"
         old = self._write_temp(old_sql)
@@ -163,7 +163,7 @@ class TestCheck:
             os.unlink(old)
             os.unlink(new)
 
-    def test_add_table(self):
+    def test_テーブル追加は警告しない(self):
         old_sql = "CREATE TABLE users (id SERIAL PRIMARY KEY);"
         new_sql = """
         CREATE TABLE users (id SERIAL PRIMARY KEY);
@@ -179,59 +179,46 @@ class TestCheck:
             os.unlink(new)
 
 
-class TestParseSchemaQualifiedTableNames:
-    """schema 修飾付きテーブル名を unqualified 名に正規化する仕様。
-
-    同一テーブルが片側だけ `schema.` 付きで書かれても別テーブルと誤認しないよう、
+class Testschema修飾付きテーブル名の正規化:
+    """同一テーブルが片側だけ `schema.` 付きで書かれても別テーブルと誤認しないよう、
     キーは常に修飾子を外した名前にする。
     """
 
-    @pytest.mark.parametrize("qualifier", ["", "app.", "public.", "MySchema."])
-    def test_qualifier_is_stripped_from_table_key(self, qualifier):
-        """観点: schema 修飾子の有無・内容にかかわらずテーブルキーは unqualified 名になる。
-
-        Args:
-            qualifier: CREATE TABLE に付与する schema 修飾子（空文字は無修飾）。
-        """
+    @pytest.mark.parametrize(
+        "qualifier",
+        [
+            pytest.param("", id="無修飾のとき users キーになる"),
+            pytest.param("app.", id="app. 修飾でも users キーになる"),
+            pytest.param("public.", id="public. 修飾でも users キーになる"),
+            pytest.param("MySchema.", id="MySchema. 修飾でも users キーになる"),
+        ],
+    )
+    def test_schema修飾子を外したテーブル名をキーにする(self, qualifier):
         sql = f"CREATE TABLE {qualifier}users (id SERIAL PRIMARY KEY, name TEXT);"
         tables = parse_schema(sql)
         assert set(tables) == {"users"}
         assert tables["users"] == {"id", "name"}
 
 
-class TestParseSchemaIdentifierFolding:
-    """PostgreSQL の識別子畳み込みに合わせてカラム名を正規化する仕様。"""
-
+class Test識別子の畳み込み:
     @pytest.mark.parametrize(
-        "column_definition,expected",
+        ("column_definition", "expected"),
         [
-            ('"order" INTEGER', "order"),
-            ('"Order" INTEGER', "Order"),
-            ('"group" TEXT NOT NULL', "group"),
-            ("Users INTEGER", "users"),
-            ("created_at TIMESTAMP", "created_at"),
+            pytest.param('"order" INTEGER', "order", id='引用符付き "order" は小文字を保持する'),
+            pytest.param('"Order" INTEGER', "Order", id='引用符付き "Order" は大小を保持する'),
+            pytest.param('"group" TEXT NOT NULL', "group", id='引用符付き予約語 "group" もそのまま保持する'),
+            pytest.param("Users INTEGER", "users", id="引用符なし Users は users へ小文字化する"),
+            pytest.param("created_at TIMESTAMP", "created_at", id="引用符なし created_at はそのまま"),
         ],
     )
-    def test_quoted_preserves_case_unquoted_is_lowercased(self, column_definition, expected):
-        """観点: 引用符付き識別子は大小を保持し、引用符なしは小文字へ畳む (PostgreSQL の識別子規則)。
-
-        Args:
-            column_definition: CREATE TABLE に含める 1 カラム分の DDL 断片。
-            expected: パース結果に現れるべき正規化後カラム名。
-        """
+    def test_引用符付きは大小を保持し引用符なしは小文字へ畳む(self, column_definition, expected):
+        # PostgreSQL の識別子規則: 引用符付きは大小を保持、引用符なしは小文字へ畳む。
         tables = parse_schema(f"CREATE TABLE t ({column_definition});")
         assert tables["t"] == {expected}
 
 
-class TestCheckMultipleDestructiveChanges:
-    """複数の破壊的変更をまとめて検出し、警告を整列して返す仕様。"""
-
-    def test_multiple_table_and_column_drops_are_all_reported_sorted(self, tmp_path):
-        """観点: 複数テーブル削除と複数カラム削除が全て検出され、整列順で並ぶ。
-
-        Args:
-            tmp_path: pytest が用意する一時ディレクトリ。
-        """
+class Test複数破壊的変更の検出:
+    def test_複数テーブル削除と複数カラム削除が全て整列順で報告される(self, tmp_path):
         old = _write_schema(
             tmp_path,
             "old.sql",
@@ -252,21 +239,14 @@ class TestCheckMultipleDestructiveChanges:
         ]
 
     @pytest.mark.parametrize(
-        "old_qualifier,new_qualifier",
+        ("old_qualifier", "new_qualifier"),
         [
-            ("app.", ""),
-            ("", "app."),
-            ("app.", "public."),
+            pytest.param("app.", "", id="app. から無修飾でも DROP としない"),
+            pytest.param("", "app.", id="無修飾から app. でも DROP としない"),
+            pytest.param("app.", "public.", id="app. から public. でも DROP としない"),
         ],
     )
-    def test_schema_qualifier_change_is_not_reported_as_drop(self, tmp_path, old_qualifier, new_qualifier):
-        """観点: 同一テーブルの schema 修飾子が変わっただけでは破壊的変更扱いしない。
-
-        Args:
-            tmp_path: pytest が用意する一時ディレクトリ。
-            old_qualifier: 旧スキーマでテーブルに付ける修飾子。
-            new_qualifier: 新スキーマでテーブルに付ける修飾子。
-        """
+    def test_schema修飾子が変わっただけでは破壊的変更にしない(self, tmp_path, old_qualifier, new_qualifier):
         old = _write_schema(
             tmp_path,
             "old.sql",
@@ -280,12 +260,7 @@ class TestCheckMultipleDestructiveChanges:
         warnings = check(old, new)
         assert warnings == []
 
-    def test_dropped_qualified_table_reported_with_unqualified_name(self, tmp_path):
-        """観点: schema 修飾付きで定義されたテーブルの削除は unqualified 名で警告される。
-
-        Args:
-            tmp_path: pytest が用意する一時ディレクトリ。
-        """
+    def test_修飾付きテーブルの削除はunqualified名で警告される(self, tmp_path):
         old = _write_schema(
             tmp_path,
             "old.sql",
@@ -299,40 +274,26 @@ class TestCheckMultipleDestructiveChanges:
         assert warnings == ["DROP TABLE: logs"]
 
 
-class TestMain:
-    """CLI が破壊的変更の有無を終了コードで表現する仕様。
-
-    exit 2 = 引数不正、exit 1 = 破壊的変更あり、exit 0 = 安全。
+class TestCLIの終了コード:
+    """exit 2 = 引数不正、exit 1 = 破壊的変更あり、exit 0 = 安全。
     CI のゲートがこの終了コードで apply 可否を判断する。
     """
 
     @pytest.mark.parametrize(
         "argv",
         [
-            ["schema_check"],
-            ["schema_check", "only_one_path"],
-            ["schema_check", "a", "b", "c"],
+            pytest.param(["schema_check"], id="引数0個のとき exit 2"),
+            pytest.param(["schema_check", "only_one_path"], id="引数1個のとき exit 2"),
+            pytest.param(["schema_check", "a", "b", "c"], id="引数3個のとき exit 2"),
         ],
     )
-    def test_wrong_argument_count_exits_2(self, monkeypatch, argv):
-        """観点: 引数が old/new の 2 個でなければ exit 2 で使い方エラーを示す。
-
-        Args:
-            monkeypatch: sys.argv を差し替えるための pytest フィクスチャ。
-            argv: main に渡すコマンドライン引数列（要素数が 3 でないもの）。
-        """
+    def test_引数がold_newの2個でなければexit2にする(self, monkeypatch, argv):
         monkeypatch.setattr("sys.argv", argv)
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 2
 
-    def test_no_destructive_change_exits_0(self, monkeypatch, tmp_path):
-        """観点: 破壊的変更が無ければ exit 0 で apply を許可する。
-
-        Args:
-            monkeypatch: sys.argv を差し替えるための pytest フィクスチャ。
-            tmp_path: pytest が用意する一時ディレクトリ。
-        """
+    def test_破壊的変更が無ければexit0でapplyを許可する(self, monkeypatch, tmp_path):
         sql = "CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);"
         old = _write_schema(tmp_path, "old.sql", sql)
         new = _write_schema(tmp_path, "new.sql", sql)
@@ -341,14 +302,7 @@ class TestMain:
             main()
         assert exc.value.code == 0
 
-    def test_destructive_change_exits_1_and_lists_warning(self, monkeypatch, tmp_path, capsys):
-        """観点: 破壊的変更があれば exit 1 で apply を止め、該当警告を出力する。
-
-        Args:
-            monkeypatch: sys.argv を差し替えるための pytest フィクスチャ。
-            tmp_path: pytest が用意する一時ディレクトリ。
-            capsys: 標準出力を捕捉する pytest フィクスチャ。
-        """
+    def test_破壊的変更があればexit1で止め該当警告を出力する(self, monkeypatch, tmp_path, capsys):
         old = _write_schema(
             tmp_path,
             "old.sql",
