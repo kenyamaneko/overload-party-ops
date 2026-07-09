@@ -46,15 +46,12 @@ CLOUDSQL = "google_sql_database_instance"
 ACTIVATION_POLICY_SUPPRESS = [{"type": CLOUDSQL, "attribute": "settings[0].activation_policy"}]
 
 
-class TestStripInitNoise:
-    """terraform init のボイラープレート行を除去する仕様。
-
-    エラー時の Slack 通知に init ログが混ざるとノイズで読みづらくなるため、
-    init の典型メッセージだけ削り、エラー本体は残すことが目的。
+class Testinitノイズの除去:
+    """エラー時の Slack 通知に init ログが混ざるとノイズで読みづらくなるため、
+    init の典型メッセージだけ削り、エラー本体は残す。
     """
 
-    def test_removes_initializing_lines(self):
-        """観点: "Initializing ..." 系のボイラープレート行が削られる。"""
+    def test_Initializing系のボイラープレート行が削られる(self):
         out = (
             "Initializing the backend...\n"
             "Initializing provider plugins...\n"
@@ -67,8 +64,7 @@ class TestStripInitNoise:
         assert "successfully initialized" not in cleaned
         assert "Error: actual failure message" in cleaned
 
-    def test_removes_provider_install_lines(self):
-        """観点: provider インストール系の行（- Reusing/Using/Installing）が削られる。"""
+    def test_providerインストール系の行が削られる(self):
         out = (
             "- Reusing previous version of hashicorp/google\n"
             "- Using previously-installed hashicorp/google v6.0.0\n"
@@ -83,63 +79,51 @@ class TestStripInitNoise:
         assert "Installed" not in cleaned
         assert "real error here" in cleaned
 
-    def test_preserves_error_content(self):
-        """観点: エラー本文は削られずそのまま残る。"""
+    def test_エラー本文はそのまま残る(self):
         out = "Error: Failed to query available provider packages\n\nCould not retrieve the list of available versions"
         cleaned = _strip_init_noise(out)
         assert "Failed to query available provider packages" in cleaned
         assert "Could not retrieve the list of available versions" in cleaned
 
-    def test_drops_empty_lines(self):
-        """観点: 空行は削られ、Slack 上の無駄な改行を減らす。"""
+    def test_空行は削られる(self):
         out = "line1\n\n\nline2\n"
         cleaned = _strip_init_noise(out)
         assert cleaned == "line1\nline2"
 
-    def test_empty_input(self):
-        """観点: 空入力でも例外を投げず空文字列を返す境界条件。"""
+    def test_空入力は空文字列を返す(self):
         assert _strip_init_noise("") == ""
 
 
-class TestDiffPaths:
-    """before / after JSON から差分属性パスを列挙する仕様。
-
-    suppress 判定が属性単位なので、path 表現（dict は `.key`、list は `[i]`）が
+class Test差分属性パスの列挙:
+    """suppress 判定が属性単位なので、path 表現（dict は `.key`、list は `[i]`）が
     rule の attribute 表現と一致することを保証する。
     """
 
-    def test_scalar_mismatch_at_top_level_key(self):
-        """観点: dict 配下のスカラ差分は `.key` パスで検出される。"""
+    def test_dict配下のスカラ差分はkeyパスで検出される(self):
         paths = _diff_paths({"tier": "old"}, {"tier": "new"})
         assert paths == ["tier"]
 
-    def test_nested_dict_mismatch_uses_dot_separator(self):
-        """観点: dict のネストは `a.b` 形式で連結される。"""
+    def test_dictのネストはドット区切りで連結される(self):
         paths = _diff_paths({"a": {"b": 1}}, {"a": {"b": 2}})
         assert paths == ["a.b"]
 
-    def test_list_element_mismatch_uses_bracket_index(self):
-        """観点: list 要素の差分は `[i]` 形式で示される。"""
+    def test_list要素の差分は角括弧インデックスで示される(self):
         paths = _diff_paths(
             {"settings": [{"activation_policy": "ALWAYS"}]},
             {"settings": [{"activation_policy": "NEVER"}]},
         )
         assert paths == ["settings[0].activation_policy"]
 
-    def test_equal_values_return_empty(self):
-        """観点: 完全一致なら空リスト（no-op）。"""
+    def test_完全一致なら空リストになる(self):
         assert _diff_paths({"a": 1}, {"a": 1}) == []
 
-    def test_missing_key_is_detected_as_diff(self):
-        """観点: 片側だけ存在するキーは差分として検出される。
-
-        silent にスキップすると「drift を拾い損ねる」ため。
-        """
+    def test_片側だけ存在するキーは差分として検出される(self):
+        # silent にスキップすると「drift を拾い損ねる」ため。
         paths = _diff_paths({"a": 1, "b": 2}, {"a": 1})
         assert paths == ["b"]
 
-    def test_multiple_diffs_all_listed(self):
-        """観点: 複数箇所の差分は全部列挙される（重複抑止の判定材料として完全性が要る）。"""
+    def test_複数箇所の差分は全部列挙される(self):
+        # 重複抑止の判定材料として完全性が要る。
         paths = _diff_paths(
             {"tier": "old", "flag": False},
             {"tier": "new", "flag": True},
@@ -147,15 +131,12 @@ class TestDiffPaths:
         assert set(paths) == {"tier", "flag"}
 
 
-class TestParsePlanJsonSuppression:
-    """plan JSON から no-op 以外のリソース変更を取り出し、suppress を分離する仕様。
-
-    dev/stg で活きる: Cloud SQL の activation_policy 差分だけならノイズとして吸収。
+class Testplan_JSONのsuppress分離:
+    """dev/stg で活きる: Cloud SQL の activation_policy 差分だけならノイズとして吸収。
     prod で活きる: suppress rule が無い env では何も抑止しない＝drift として通知。
     """
 
-    def test_no_op_resources_are_ignored(self):
-        """観点: actions=["no-op"] のリソースは visible/suppressed いずれにも積まれない。"""
+    def test_no_opのリソースはvisibleにもsuppressedにも積まれない(self):
         plan = _plan_json(
             _resource_change("google_foo.bar", "google_foo", ["no-op"], {}, {}),
         )
@@ -163,14 +144,11 @@ class TestParsePlanJsonSuppression:
         assert visible == []
         assert suppressed == []
 
-    def test_read_action_resources_are_ignored(self):
-        """観点: actions=["read"] (deferred data source read) は visible/suppressed いずれにも積まれない。
-
-        terraform は data source の plan 時 refresh が確定しないとき (依存する managed
-        resource が同 plan で変更予定 / 引数に unknown after apply が含まれる) に
-        ["read"] を発行する。トリガとなる managed resource の変更は同じ plan に必ず
-        併載されるため、["read"] を skip しても drift 信号は失われない。
-        """
+    def test_readアクションのdataソースはvisibleにもsuppressedにも積まれない(self):
+        # terraform は data source の plan 時 refresh が確定しないとき (依存する managed
+        # resource が同 plan で変更予定 / 引数に unknown after apply が含まれる) に ["read"] を
+        # 発行する。トリガとなる managed resource の変更は同じ plan に必ず併載されるため、
+        # ["read"] を skip しても drift 信号は失われない。
         plan = _plan_json(
             _resource_change("data.google_sql_database_instance.target", "google_sql_database_instance", ["read"], None, None),
         )
@@ -178,13 +156,9 @@ class TestParsePlanJsonSuppression:
         assert visible == []
         assert suppressed == []
 
-    def test_read_action_does_not_mask_trigger_change(self):
-        """観点: ["read"] と同 plan のトリガ resource (例: google_project_service の update)
-        は visible に残り、drift として通知される。
-
-        ["read"] を skip するだけで、その引き金になっている managed resource の変更を
-        握りつぶさないことを保証する。
-        """
+    def test_readと同planのトリガresourceはvisibleに残り通知される(self):
+        # ["read"] を skip するだけで、その引き金になっている managed resource の変更を
+        # 握りつぶさないことを保証する。
         plan = _plan_json(
             _resource_change("data.google_sql_database_instance.target", "google_sql_database_instance", ["read"], None, None),
             _resource_change("module.psc_cloudsql.google_project_service.sqladmin", "google_project_service", ["update"], {"disable_on_destroy": True}, {"disable_on_destroy": False}),
@@ -194,11 +168,8 @@ class TestParsePlanJsonSuppression:
         assert visible[0]["type"] == "google_project_service"
         assert suppressed == []
 
-    def test_suppressed_when_only_rule_matched_attribute_changed(self):
-        """観点: dev の Cloud SQL で activation_policy だけ変わった update は suppressed へ。
-
-        これが「dev/stg で nightly-shutdown が動いた後の日常ノイズ」を拾わない核心仕様。
-        """
+    def test_ルール一致属性だけ変わったupdateはsuppressedへ(self):
+        # 「dev/stg で nightly-shutdown が動いた後の日常ノイズ」を拾わない核心仕様。
         plan = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
@@ -210,12 +181,9 @@ class TestParsePlanJsonSuppression:
         assert visible == []
         assert len(suppressed) == 1
 
-    def test_not_suppressed_when_non_rule_attribute_also_changed(self):
-        """観点: suppress 対象外の属性が 1 つでも変わっていれば visible に残す。
-
-        tier 変更のような意図しない変更を activation_policy と同時に起こしたときに
-        silent にしないための仕様。リソース丸ごと通知することで人に調査させる。
-        """
+    def test_ルール対象外の属性が1つでも変われば_visibleに残す(self):
+        # tier 変更のような意図しない変更を activation_policy と同時に起こしたときに silent に
+        # しないため。リソース丸ごと通知することで人に調査させる。
         plan = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
@@ -227,11 +195,8 @@ class TestParsePlanJsonSuppression:
         assert len(visible) == 1
         assert suppressed == []
 
-    def test_not_suppressed_when_no_suppress_rules(self):
-        """観点: suppress rule が空 (prod 相当) なら全て visible。
-
-        prod で同じ activation_policy 差分を出しても検知されることを保証する。
-        """
+    def test_suppressルールが空なら_prod相当で全てvisible(self):
+        # prod で同じ activation_policy 差分を出しても検知されることを保証する。
         plan = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
@@ -243,11 +208,8 @@ class TestParsePlanJsonSuppression:
         assert len(visible) == 1
         assert suppressed == []
 
-    def test_create_is_never_suppressed(self):
-        """観点: actions=["create"] は構造的変更なので suppress 対象外。
-
-        新規リソース追加を「属性一致」を理由に抑止するのは明らかに危険。
-        """
+    def test_createは構造的変更なのでsuppress対象外(self):
+        # 新規リソース追加を「属性一致」を理由に抑止するのは明らかに危険。
         plan = _plan_json(_resource_change(
             "google_sql_database_instance.main",
             CLOUDSQL,
@@ -259,8 +221,7 @@ class TestParsePlanJsonSuppression:
         assert len(visible) == 1
         assert suppressed == []
 
-    def test_replace_is_never_suppressed(self):
-        """観点: actions=["delete","create"] (replace) も構造的変更で suppress 対象外。"""
+    def test_replaceは構造的変更なのでsuppress対象外(self):
         plan = _plan_json(_resource_change(
             "google_sql_database_instance.main",
             CLOUDSQL,
@@ -272,8 +233,7 @@ class TestParsePlanJsonSuppression:
         assert len(visible) == 1
         assert suppressed == []
 
-    def test_rule_for_different_type_does_not_apply(self):
-        """観点: suppress rule の type が違うリソースは抑止対象外。"""
+    def test_ルールのtypeが違うリソースは抑止対象外(self):
         plan = _plan_json(_resource_change(
             "google_storage_bucket.a",
             "google_storage_bucket",
@@ -285,10 +245,7 @@ class TestParsePlanJsonSuppression:
         assert len(visible) == 1
         assert suppressed == []
 
-    def test_mixed_resources_split_by_suppress_rule(self):
-        """観点: 同一 plan に suppressed な変更と visible な変更が混在するとき、
-        それぞれ正しく振り分けられる。
-        """
+    def test_同一planでsuppressedとvisibleが正しく振り分けられる(self):
         plan = _plan_json(
             _resource_change(
                 "google_sql_database_instance.main",
@@ -311,20 +268,14 @@ class TestParsePlanJsonSuppression:
         assert len(suppressed) == 1
         assert suppressed[0]["type"] == CLOUDSQL
 
-    def test_malformed_json_raises(self):
-        """観点: 不正な JSON は PlanParseError で人間調査を促す。
-
-        silent に [] 扱いすると「差分ゼロ」と誤通知されるため。
-        """
+    def test_不正なJSONはPlanParseErrorになる(self):
+        # silent に [] 扱いすると「差分ゼロ」と誤通知されるため。
         with pytest.raises(PlanParseError):
             parse_plan_json("not a json", [])
 
 
-class TestFormatSummary:
-    """visible_changes から Slack 通知用サマリを組み立てる仕様。"""
-
-    def test_plan_line_counts_actions(self):
-        """観点: `Plan: N to add, M to change, K to destroy` の件数が正しく集計される。"""
+class Testサマリの組み立て:
+    def test_Plan行の追加変更削除の件数を集計する(self):
         changes = [
             _resource_change("a", "t", ["create"], None, {}),
             _resource_change("b", "t", ["update"], {}, {}),
@@ -333,28 +284,21 @@ class TestFormatSummary:
         summary = format_summary(changes)
         assert "Plan: 1 to add, 1 to change, 1 to destroy." in summary
 
-    def test_replace_counted_as_add_and_destroy(self):
-        """観点: replace (delete+create) は add と destroy の両方に 1 ずつ積まれる。
-
-        terraform plan 本家のテキスト集計と同じ慣習に合わせる。
-        """
+    def test_replaceはaddとdestroyに1ずつ積まれる(self):
+        # terraform plan 本家のテキスト集計と同じ慣習に合わせる。
         changes = [_resource_change("a", "t", ["delete", "create"], {}, {})]
         summary = format_summary(changes)
         assert "Plan: 1 to add, 0 to change, 1 to destroy." in summary
 
-    def test_resource_lines_render_action_label(self):
-        """観点: アドレスとアクションラベルが `<addr> will be <label>` 形式で出る。"""
+    def test_アドレスとアクションラベルがwill_be形式で出る(self):
         changes = [
             _resource_change("google_storage_bucket.a", "google_storage_bucket", ["create"], None, {}),
         ]
         summary = format_summary(changes)
         assert "google_storage_bucket.a will be created" in summary
 
-    def test_overflow_resources_are_collapsed(self):
-        """観点: 11 件以上の変更対象は 10 件まで + 「他N件」にまとめる。
-
-        Slack 通知の読みやすさ確保と文字数制限への対応仕様。
-        """
+    def test_11件以上は10件までと他N件にまとめる(self):
+        # Slack 通知の読みやすさ確保と文字数制限への対応。
         changes = [
             _resource_change(f"r.{i}", "t", ["create"], None, {})
             for i in range(15)
@@ -365,61 +309,47 @@ class TestFormatSummary:
         assert "r.10 will be created" not in summary
         assert "他 5 リソース" in summary
 
-    def test_empty_visible_raises(self):
-        """観点: visible_changes が空で呼ばれたら PlanParseError。
-
-        「visible ゼロ」は上位で「suppress で全部吸収 → no drift」として扱う分岐に
-        倒すべきで、summary に進ませるのは呼び出しミス。silent に空文字を返さない。
-        """
+    def test_visibleが空ならPlanParseErrorになる(self):
+        # 「visible ゼロ」は上位で「suppress で全部吸収 → no drift」として扱う分岐に倒すべきで、
+        # summary に進ませるのは呼び出しミス。silent に空文字を返さない。
         with pytest.raises(PlanParseError):
             format_summary([])
 
 
-class TestLoadTargets:
-    """targets.yaml の読み込み。ファイル不在は silent に [] を返さず例外化する。"""
+class Testtargets_yamlの読み込み:
+    """ファイル不在は silent に [] を返さず例外化する。"""
 
-    def test_loads_yaml(self, tmp_path):
-        """観点: targets.yaml の内容が list[dict] としてロードされる。"""
+    def test_targets_yamlの内容をlistとしてロードする(self, tmp_path):
         yaml_file = tmp_path / "targets.yaml"
         yaml_file.write_text("- repo: a\n  environments: []\n")
         with patch("check.TARGETS_YAML", yaml_file):
             result = load_targets()
         assert result == [{"repo": "a", "environments": []}]
 
-    def test_missing_raises(self, tmp_path):
-        """観点: targets.yaml が存在しなければ FileNotFoundError を投げる。
-
-        silent に [] を返すと「監視対象ゼロ = 全環境クリア」と誤認される事故を招く。
-        """
+    def test_targets_yamlが無ければFileNotFoundErrorを投げる(self, tmp_path):
+        # silent に [] を返すと「監視対象ゼロ = 全環境クリア」と誤認される事故を招く。
         missing = tmp_path / "nope.yaml"
         with patch("check.TARGETS_YAML", missing):
             with pytest.raises(FileNotFoundError):
                 load_targets()
 
 
-class TestCloneRepo:
-    """git clone のエラーを stderr に残しつつ None を返して呼び出し側に委譲する仕様。"""
+class Testリポジトリのclone:
+    """git clone のエラーを stderr に残しつつ None を返して呼び出し側に委譲する。"""
 
-    def test_success_returns_dest_path(self):
-        """観点: clone 成功時は dest path を返す。"""
+    def test_clone成功時はdestパスを返す(self):
         with patch("check.run", return_value=_proc(0)):
             result = clone_repo("repo-x", "token")
         assert result is not None
         assert "repo-x" in result
 
-    def test_failure_returns_none(self):
-        """観点: clone 失敗時は None を返し、呼び出し側で errors に積ませる。
-
-        例外で落とさず None で伝えるのは、他のリポジトリの plan を続けるため。
-        """
+    def test_clone失敗時はNoneを返し呼び出し側でerrorsに積ませる(self):
+        # 例外で落とさず None で伝えるのは、他のリポジトリの plan を続けるため。
         with patch("check.run", return_value=_proc(1, stderr="auth failed")):
             assert clone_repo("repo-x", "token") is None
 
-    def test_failure_logs_stderr_with_repo_name(self, capsys):
-        """観点: 失敗詳細が stderr に出る。silent failure 防止。
-
-        リポ名を含めないと、どのリポで何が失敗したか Actions ログから追えなくなる。
-        """
+    def test_失敗詳細がリポ名付きでstderrに出る(self, capsys):
+        # リポ名を含めないと、どのリポで何が失敗したか Actions ログから追えなくなる。
         with patch("check.run", return_value=_proc(1, stderr="auth failed")):
             clone_repo("repo-x", "token")
         captured = capsys.readouterr()
@@ -427,40 +357,32 @@ class TestCloneRepo:
         assert "repo-x" in captured.err
 
 
-class TestTerraformPlan:
-    """terraform init + plan + show -json の 3 段パイプの分岐仕様。
-
-    -detailed-exitcode の意味:
-      exit 0 = 差分なし / exit 2 = drift / exit その他 = エラー
+class Testterraform_planの3段パイプ:
+    """-detailed-exitcode の意味: exit 0 = 差分なし / exit 2 = drift / exit その他 = エラー。
     drift 時だけ show -json で構造化 JSON を取り、上位に渡す。
     """
 
-    def test_init_failure_returns_1(self):
-        """観点: init が失敗したら plan を実行せず (1, detail) を返す。"""
+    def test_init失敗ならplanを実行せず1と詳細を返す(self):
         with patch("check.run", return_value=_proc(1, stderr="init failed")):
             code, output = run_terraform_plan("/work")
         assert code == 1
         assert "init failed" in output
 
-    def test_init_failure_does_not_run_plan(self):
-        """観点: init 失敗時に plan を叩かない（無駄な API 呼びを防ぐ）。"""
+    def test_init失敗時はplanを叩かない(self):
+        # 無駄な API 呼びを防ぐ。
         with patch("check.run", side_effect=[_proc(1, stderr="init failed")]) as run_mock:
             run_terraform_plan("/work")
         assert run_mock.call_count == 1
 
-    def test_no_drift_returns_0_and_empty_output(self):
-        """観点: plan exit 0 → (0, "")。show は呼ばない。"""
+    def test_plan_exit0なら0と空を返しshowは呼ばない(self):
         with patch("check.run", side_effect=[_proc(0), _proc(0)]) as run_mock:
             code, output = run_terraform_plan("/work")
         assert code == 0
         assert output == ""
         assert run_mock.call_count == 2
 
-    def test_drift_detected_returns_show_json(self):
-        """観点: plan exit 2 → show -json を実行し (2, JSON) を返す。
-
-        上位 (parse_plan_json) が属性単位で suppress 判定するため JSON が必要。
-        """
+    def test_plan_exit2ならshow_jsonを実行し2とJSONを返す(self):
+        # 上位 (parse_plan_json) が属性単位で suppress 判定するため JSON が必要。
         plan_json = _plan_json(_resource_change("r.a", "t", ["update"], {"x": 1}, {"x": 2}))
         with patch("check.run", side_effect=[
             _proc(0), _proc(2), _proc(0, stdout=plan_json),
@@ -469,18 +391,14 @@ class TestTerraformPlan:
         assert code == 2
         assert output == plan_json
 
-    def test_plan_error_returns_1(self):
-        """観点: plan が 非0/非2 → (1, detail)。drift とエラーを混同しない。"""
+    def test_plan_exitが非0非2なら1でdriftとエラーを混同しない(self):
         with patch("check.run", side_effect=[_proc(0), _proc(1, stderr="provider error")]):
             code, _ = run_terraform_plan("/work")
         assert code == 1
 
-    def test_show_failure_returns_1(self):
-        """観点: drift (plan exit 2) でも show -json が失敗したら error 扱い。
-
-        JSON が取れなければ上位で suppress 判定できず「内容不明な drift」と同じ
-        構造的問題になるため error として仕分ける。
-        """
+    def test_drift時でもshow_jsonが失敗したらerror扱いにする(self):
+        # JSON が取れなければ上位で suppress 判定できず「内容不明な drift」と同じ構造的問題に
+        # なるため error として仕分ける。
         with patch("check.run", side_effect=[
             _proc(0), _proc(2), _proc(1, stderr="show failed"),
         ]):
@@ -488,8 +406,8 @@ class TestTerraformPlan:
         assert code == 1
         assert "show failed" in output
 
-    def test_plan_error_prefers_stderr(self):
-        """観点: error 時は stderr → stdout の順で詳細を選ぶ（CLI の慣習）。"""
+    def test_error時はstderrを優先して詳細に選ぶ(self):
+        # CLI の慣習に合わせ stderr → stdout の順で詳細を選ぶ。
         with patch("check.run", side_effect=[
             _proc(0),
             _proc(1, stdout="stdout content", stderr="stderr detail"),
@@ -498,11 +416,9 @@ class TestTerraformPlan:
         assert "stderr detail" in output
 
 
-class TestNotifySlackTruncation:
-    """Slack 通知 payload の truncate と失敗時挙動を固定。
-
-    Slack API は 4000 chars 超過で通知そのものを失敗させる。
-    ユーザーが何も気付けない silent failure を避けるための truncate 仕様を固定する。
+class TestSlack通知のtruncate:
+    """Slack API は 4000 chars 超過で通知そのものを失敗させる。ユーザーが何も気付けない
+    silent failure を避けるための truncate 仕様を固定する。
     """
 
     def _capture_payload(self):
@@ -512,19 +428,14 @@ class TestNotifySlackTruncation:
             return MagicMock()
         return captured, _urlopen
 
-    def test_normal_message_posts(self):
-        """観点: 正常時に urlopen が呼ばれる。"""
+    def test_正常時にurlopenが呼ばれる(self):
         with patch("check.urllib.request.urlopen") as urlopen:
             notify_slack("https://webhook", "hello")
         urlopen.assert_called_once()
 
-    def test_over_limit_payload_fits_slack_api_max(self):
-        """観点: 長大メッセージでも Slack API の 4000 文字制限内に収まり、truncate マーカーが付く。
-
-        Slack API は text > 4000 で通知自体を失敗させる。ここで検証すべきは
-        「制限を超えたときに Slack が受け付ける形に収まるか」であり、内部定数
-        SLACK_TEXT_LIMIT の値そのものではない（定数は実装詳細）。
-        """
+    def test_長大メッセージでもSlack_API制限内に収まりtruncateマーカーが付く(self):
+        # 検証すべきは「制限を超えたときに Slack が受け付ける形に収まるか」であり、
+        # 内部定数 SLACK_TEXT_LIMIT の値そのものではない（定数は実装詳細）。
         captured, urlopen = self._capture_payload()
         with patch("check.urllib.request.urlopen", side_effect=urlopen):
             notify_slack("https://webhook", "x" * 10000)
@@ -532,20 +443,17 @@ class TestNotifySlackTruncation:
         assert "…(truncated)" in payload["text"]
         assert len(payload["text"]) < 4000
 
-    def test_exactly_at_limit_is_not_truncated(self):
-        """観点: SLACK_TEXT_LIMIT ちょうどなら truncate しない（>= ではなく > 条件の境界）。"""
+    def test_SLACK_TEXT_LIMITちょうどはtruncateしない(self):
+        # >= ではなく > 条件の境界。
         captured, urlopen = self._capture_payload()
         with patch("check.urllib.request.urlopen", side_effect=urlopen):
             notify_slack("https://webhook", "x" * SLACK_TEXT_LIMIT)
         payload = json.loads(captured["data"])
         assert "truncated" not in payload["text"]
 
-    def test_webhook_failure_exits_1(self):
-        """観点: urlopen 例外時は sys.exit(1) で Actions Job 失敗させる。
-
-        Slack への到達が唯一の可視化経路なので、届かなかった時は
-        プロセス終了コードで二重に気付かせる。
-        """
+    def test_urlopen例外時はexit1でActions_Jobを失敗させる(self):
+        # Slack への到達が唯一の可視化経路なので、届かなかった時はプロセス終了コードで
+        # 二重に気付かせる。
         with patch("check.urllib.request.urlopen", side_effect=Exception("boom")):
             with pytest.raises(SystemExit) as exc:
                 notify_slack("https://webhook", "x")
@@ -585,24 +493,20 @@ def _run_main_with_plan_result(
     return captured
 
 
-class TestMainErrorPropagation:
-    """run_terraform_plan のエラーが Slack 通知まで届くことを end-to-end で検証する。
-
-    個々のユニットテストは戻り値までしか見ないため、main() の errors 積み込みや
+class Testmainのエラー伝播:
+    """個々のユニットテストは戻り値までしか見ないため、main() の errors 積み込みや
     メッセージ組み立てで detail が欠落しても検知できない。ユーザーが異常に気付ける
     唯一の経路である Slack payload を起点に保証する。
     """
 
-    def test_plan_error_detail_reaches_slack(self):
-        """観点: run_terraform_plan が返した error detail が Slack payload に載る。"""
+    def test_plan実行エラーの詳細がSlack_payloadに載る(self):
         result = _run_main_with_plan_result(1, "provider auth failed: 401")
         assert result["called"] is True
         assert "plan 実行エラー" in result["message"]
         assert "r/e" in result["message"]
         assert "provider auth failed: 401" in result["message"]
 
-    def test_drift_summary_reaches_slack(self):
-        """観点: drift 検出時は plan JSON を parse したサマリが Slack payload に載る。"""
+    def test_drift検出時はplan_JSONをparseしたサマリがSlack_payloadに載る(self):
         plan_json = _plan_json(
             _resource_change("google_storage_bucket.a", "google_storage_bucket", ["create"], None, {}),
         )
@@ -614,20 +518,15 @@ class TestMainErrorPropagation:
         assert "google_storage_bucket.a will be created" in result["message"]
 
 
-class TestMainSuppression:
-    """suppress ルール適用後の Slack 通知仕様。
-
-    Terraform 側で activation_policy は ignore_changes から外しているので plan には
-    常に差分として載る。dev/stg では targets.yaml の suppress でノイズを消し、
-    prod では suppress なしで通知する、という設計を end-to-end で保証する。
+class Testmainのsuppress適用:
+    """Terraform 側で activation_policy は ignore_changes から外しているので plan には
+    常に差分として載る。dev/stg では targets.yaml の suppress でノイズを消し、prod では
+    suppress なしで通知する、という設計を end-to-end で保証する。
     """
 
-    def test_dev_activation_policy_only_is_notified_as_clean(self):
-        """観点: dev 相当（suppress 有り）で activation_policy 単独差分は drift 扱いされず差分なし通知になる。
-
-        nightly-shutdown / /db-stop が起こす常態的 drift を毎朝 drift として騒がないための核心仕様。
-        毎朝の死活通知は送るが、内容は「差分なし」になる。
-        """
+    def test_dev相当でactivation_policy単独差分は差分なし通知になる(self):
+        # nightly-shutdown / /db-stop が起こす常態的 drift を毎朝 drift として騒がないための
+        # 核心仕様。毎朝の死活通知は送るが、内容は「差分なし」になる。
         plan_json = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
@@ -641,12 +540,9 @@ class TestMainSuppression:
         assert "差分を検出" not in result["message"]
         assert CLOUDSQL not in result["message"]
 
-    def test_prod_activation_policy_is_notified(self):
-        """観点: prod 相当（suppress 無し）で activation_policy 差分があれば Slack 通知される。
-
-        prod の意図しない停止を検知するための要件。検知器側で明示的に
-        suppress 対象から外れていることを保証する。
-        """
+    def test_prod相当でactivation_policy差分があればSlack通知される(self):
+        # prod の意図しない停止を検知するための要件。検知器側で明示的に suppress 対象から
+        # 外れていることを保証する。
         plan_json = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
@@ -659,11 +555,8 @@ class TestMainSuppression:
         assert "差分を検出" in result["message"]
         assert CLOUDSQL in result["message"]
 
-    def test_dev_mixed_with_non_suppressed_attribute_is_notified(self):
-        """観点: dev でも suppress 対象外の属性（例: tier）が同時に変わっていれば通知する。
-
-        抑止が「リソース内全属性が rule 内」判定のため、1 つでも外れると visible に残す。
-        """
+    def test_devでもsuppress対象外の属性が同時に変われば通知する(self):
+        # 抑止が「リソース内全属性が rule 内」判定のため、1 つでも外れると visible に残す。
         plan_json = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
@@ -675,11 +568,8 @@ class TestMainSuppression:
         assert result["called"] is True
         assert "差分を検出" in result["message"]
 
-    def test_dev_other_resource_drift_is_notified_even_with_suppress(self):
-        """観点: suppress rule と無関係のリソースに drift があれば通知する。
-
-        dev の suppress が「Cloud SQL 以外も黙らせる」副作用を持たないことを保証する。
-        """
+    def test_suppressルールと無関係のリソースにdriftがあれば通知する(self):
+        # dev の suppress が「Cloud SQL 以外も黙らせる」副作用を持たないことを保証する。
         plan_json = _plan_json(_resource_change(
             "google_storage_bucket.a",
             "google_storage_bucket",
@@ -691,8 +581,7 @@ class TestMainSuppression:
         assert result["called"] is True
         assert "google_storage_bucket.a" in result["message"]
 
-    def test_no_drift_notifies_clean(self):
-        """観点: plan exit 0 (差分なし) なら毎朝の死活通知として差分なしを通知する。"""
+    def test_plan_exit0なら毎朝の死活通知として差分なしを通知する(self):
         result = _run_main_with_plan_result(0, "", suppress=ACTIVATION_POLICY_SUPPRESS)
         assert result["called"] is True
         assert "差分なし" in result["message"]
