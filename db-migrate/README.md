@@ -14,15 +14,14 @@ DB スキーマはサービスごとに分割されている。DDL の所在:
 | `shop` | overload-party-shop | `db/schema.sql` |
 | `scenario` | overload-party-scenario | `db/schema.sql` |
 | `gateway` | overload-party-gateway | `db/schema.sql` |
-| `newsfeed` | overload-party-newsfeed | `db/schema.sql` |
 
-matchmaking は DB を持たない (Redis + Pub/Sub のみ)。ゲーム動的設定値 (`game_config`) は Cloud Firestore で別管理。
+matchmaking は DB を持たない (Redis + Pub/Sub のみ)。newsfeed も RDB スキーマを持たない。ゲーム動的設定値 (`game_config`) は Cloud Firestore で別管理。
 
 ## 仕組み
 
 1. `schemas.lock.yaml` に列挙された全サービスリポを pinned ref で sparse-checkout (`fetch-schemas.py`)
 2. 取得した DDL を依存順で union し `sql/schema_union.sql` に書き出す (app-level FK 依存の都合で `gateway` は `battle` の後)
-3. psqldef + `sqldef.yml` の `target_schema` で 7 スキーマを宣言的に diff → ALTER 適用
+3. psqldef + `sqldef.yml` の `target_schema` で各サービススキーマを宣言的に diff → ALTER 適用
 4. `grant_iam.sql` を psql で実行して IAM user 権限を付与 (per-schema RW)
 
 psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と union の差分を自動で計算・適用する。union は常に「望ましい全体像」なので、サービスを追加したら lock file に 1 行足せば次のマイグレーションで新スキーマが作られる。
@@ -36,7 +35,7 @@ psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と unio
 | `schemas.lock.yaml` | 各サービスリポの DDL 参照 (repo / path / ref) |
 | `fetch-schemas.py` | lock file から union をビルドする CI 側スクリプト |
 | `grant_iam.sql` | IAM ロール権限付与 (per-schema, idempotent) |
-| `sqldef.yml` | psqldef config — 管理対象スキーマを 7 つに限定 |
+| `sqldef.yml` | psqldef config (管理対象スキーマをサービス所有スキーマに限定) |
 | `schema_check.py` | 破壊的変更 (DROP TABLE / DROP COLUMN) 検出 |
 | `entrypoint.sh` | psqldef + psql 実行ラッパー (Cloud Run Job 内で走る) |
 | `Dockerfile` | psqldef を upstream patch + Alpine postgres client で同梱 |
@@ -97,14 +96,15 @@ ops リポジトリの Settings > Secrets and variables > Actions:
 
 | 種別 | 名前 | 用途 |
 |---|---|---|
-| Secret | `DB_MIGRATE_TOKEN` | 全 service repo に read 権限のある PAT（fine-grained 推奨、対象: account / battle / card / shop / scenario / gateway / newsfeed） |
+| Variable | `CROSS_REPO_DEPS_APP_ID` | service repo の schema を fetch する Cross-Repo Deps App の App ID |
+| Secret | `CROSS_REPO_DEPS_APP_PRIVATE_KEY` | 同 App の private key (PEM)。短命 token を発行し `DB_MIGRATE_TOKEN` 環境変数として注入 |
 
 環境ごと（Settings > Environments > `dev` / `stg`）:
 
 | 種別 | 名前 | 用途 |
 |---|---|---|
 | Variable | `WIF_PROVIDER` | Workload Identity Federation プロバイダ |
-| Variable | `CI_SERVICE_ACCOUNT` | CI 用サービスアカウント |
+| Variable | `DB_MIGRATOR_SERVICE_ACCOUNT` | db-migrate 実行用サービスアカウント |
 | Variable | `CLOUDSQL_INSTANCE_NAME` | Cloud SQL インスタンス名 |
 
 ## ローカルでの dry-run

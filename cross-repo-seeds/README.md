@@ -14,7 +14,7 @@ shop / card 両 repo の seed YAML 間の参照整合性を検証し、結果を
 
 - cron: 18:00 UTC = 03:00 JST 翌日 (daily)
 - workflow_dispatch (手動)
-- pull_request (validate_card_pack_refs.py / slack_notifier.py / test / workflow 変更時)
+- pull_request (Markdown / docs 等ドキュメントのみの変更を除く)
 
 ## Slack 通知
 
