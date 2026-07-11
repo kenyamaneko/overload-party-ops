@@ -6,12 +6,6 @@ on:
     - cron: "0 18 * * *"
   workflow_dispatch:
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.vscode/**'
-      - '.gitignore'
-      - 'LICENSE'
 
 concurrency:
   group: validate-cross-repo-seeds-${{ github.ref }}
@@ -22,7 +16,24 @@ permissions:
   id-token: write
 
 jobs:
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.detect.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect code change
+        id: detect
+        uses: kenyamaneko/overload-party-common/.github/actions/detect-code-change@main
+
   validate:
+    needs: [changes]
+    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true')
     name: Validate shop/card seed cross-refs
     runs-on: ubicloud-standard-2
     timeout-minutes: 10
