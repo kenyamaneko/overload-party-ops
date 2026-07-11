@@ -31,10 +31,12 @@ jobs:
         id: detect
         uses: kenyamaneko/overload-party-common/.github/actions/detect-code-change@main
 
+  # required status check の context は job ID (validate) で登録されているため、
+  # name: で表示名を上書きすると check-run の報告名がずれて required check を
+  # 満たせなくなる。
   validate:
     needs: [changes]
     if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true')
-    name: Validate shop/card seed cross-refs
     runs-on: ubicloud-standard-2
     timeout-minutes: 10
     steps:
