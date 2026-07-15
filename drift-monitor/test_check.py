@@ -428,10 +428,12 @@ class TestSlack通知のtruncate:
             return MagicMock()
         return captured, _urlopen
 
-    def test_正常時にurlopenが呼ばれる(self):
+    def test_渡したメッセージをtextペイロードとしてwebhookへ送る(self):
         with patch("check.urllib.request.urlopen") as urlopen:
             notify_slack("https://webhook", "hello")
-        urlopen.assert_called_once()
+        sent_request = urlopen.call_args.args[0]
+        assert sent_request.full_url == "https://webhook"
+        assert json.loads(sent_request.data.decode()) == {"text": "hello"}
 
     def test_長大メッセージでもSlack_API制限内に収まりtruncateマーカーが付く(self):
         # 検証すべきは「制限を超えたときに Slack が受け付ける形に収まるか」であり、
