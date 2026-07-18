@@ -38,6 +38,30 @@ class TestActions実行URLの組み立て:
                 "https://github.com/org/repo/actions/runs/7",
                 id="server_url が末尾スラッシュ付きでも二重スラッシュにならない",
             ),
+            pytest.param(
+                {
+                    "GITHUB_SERVER_URL": "https://github.com",
+                    "GITHUB_REPOSITORY": "org/repo",
+                },
+                "",
+                id="GITHUB_RUN_ID だけ欠けるとき、空文字になる",
+            ),
+            pytest.param(
+                {
+                    "GITHUB_SERVER_URL": "https://github.com",
+                    "GITHUB_RUN_ID": "7",
+                },
+                "",
+                id="GITHUB_REPOSITORY だけ欠けるとき、空文字になる",
+            ),
+            pytest.param(
+                {
+                    "GITHUB_REPOSITORY": "org/repo",
+                    "GITHUB_RUN_ID": "7",
+                },
+                "",
+                id="GITHUB_SERVER_URL だけ欠けるとき、空文字になる",
+            ),
         ],
     )
     def test_環境変数からURLを組み立てる(self, env, want):
