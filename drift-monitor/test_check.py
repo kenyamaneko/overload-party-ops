@@ -709,7 +709,7 @@ class Testmainの複数対象集約:
     ヘルパでは集約ロジック (複数ラベルの同時整形・drift とエラーの混在) を検証できない。
     """
 
-    def test_2リポで片方にdrift片方にplanエラーがあるとき警告とエラーが1通にまとまる(self):
+    def test_2リポで片方にdrift片方にplanエラーがあるときSlack_payload1通に警告とエラーがまとまる(self):
         targets = [
             {"repo": "r1", "environments": [{"name": "e1", "path": "p"}]},
             {"repo": "r2", "environments": [{"name": "e2", "path": "p"}]},
@@ -725,7 +725,7 @@ class Testmainの複数対象集約:
         assert "r2/e2" in result["message"]
         assert "provider auth failed" in result["message"]
 
-    def test_同一リポの複数環境でdriftが出たとき環境ごとのサマリが全て載る(self):
+    def test_同一リポの複数環境でdriftが出たとき環境ごとのサマリがSlack_payloadに全て載る(self):
         targets = [
             {"repo": "r1", "environments": [{"name": "e1", "path": "p"}, {"name": "e2", "path": "p"}]},
         ]

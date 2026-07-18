@@ -164,7 +164,7 @@ class TestCloudSQLの稼働チェック:
             pytest.param("STOPPED", id="state が STOPPED のとき、稼働コストなしとして何も報告しない"),
         ],
     )
-    def test_稼働中でないstateはコストとして扱われない(self, state):
+    def test_非稼働状態のCloudSQLはコストとして扱われない(self, state):
         with patch("resources.run_gcloud_value", return_value=state):
             costs, errors = check_cloudsql("proj")
         assert costs == []
@@ -491,7 +491,7 @@ class Test外部コマンド実行ラッパー:
             with pytest.raises(CommandError, match=r"mylabel 実行失敗 \(exit 42\)"):
                 _run_cmd(["fake"], label="mylabel")
 
-    def test_JSON出力ラッパはgcloud引数の末尾にformat_jsonオプションを付けて実行する(self):
+    def test_JSON出力ラッパはgcloud引数の末尾にJSON形式を指定して実行する(self):
         with patch("resources.subprocess.run", return_value=_subprocess_result(0, stdout="[]")) as run:
             run_gcloud("sql", "instances", "list")
         assert run.call_args.args[0] == ["gcloud", "sql", "instances", "list", "--format=json"]
@@ -501,7 +501,7 @@ class Test外部コマンド実行ラッパー:
             run_gcloud_value("sql", "instances", "describe", "TST")
         assert run.call_args.args[0] == ["gcloud", "sql", "instances", "describe", "TST"]
 
-    def test_kubectlラッパは引数の末尾にo_jsonオプションを付けて実行する(self):
+    def test_kubectlラッパは引数の末尾にJSON形式を指定して実行する(self):
         with patch("resources.subprocess.run", return_value=_subprocess_result(0, stdout="{}")) as run:
             run_kubectl_json("get", "ingress")
         assert run.call_args.args[0] == ["kubectl", "get", "ingress", "-o", "json"]

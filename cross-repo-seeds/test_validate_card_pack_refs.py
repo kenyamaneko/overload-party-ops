@@ -50,11 +50,11 @@ class TestShopのcard_pack_id抽出:
     @pytest.mark.parametrize(
         "yaml_text",
         [
-            pytest.param("products:\n", id="products: の値が空のとき、参照 0 件として空 dict になる"),
-            pytest.param("products: []\n", id="products が空リストのとき、空 dict になる"),
+            pytest.param("products:\n", id="products: の値が空のとき、参照 0 件として空の辞書になる"),
+            pytest.param("products: []\n", id="products が空リストのとき、空の辞書になる"),
         ],
     )
-    def test_productsが空のとき抽出結果は空dictになる(self, tmp_path: Path, yaml_text):
+    def test_productsが空のとき抽出結果は空の辞書になる(self, tmp_path: Path, yaml_text):
         path = tmp_path / "products.yaml"
         path.write_text(yaml_text, encoding="utf-8")
         assert v.load_shop_card_pack_refs(path) == {}

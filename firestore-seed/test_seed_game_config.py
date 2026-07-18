@@ -126,21 +126,23 @@ class Testlock経由の取得:
         fetch_calls = [c for c in calls if c[:2] == ["git", "fetch"]]
         assert fetch_calls[0][-1] == "main"
 
-    def test_tokenがあるとき認証情報を埋め込んだURLでcloneする(self, tmp_path):
+    @pytest.mark.parametrize(
+        ("token", "expected_url"),
+        [
+            pytest.param(
+                "TSTTOKEN", "https://x-access-token:TSTTOKEN@github.com/o/r.git",
+                id="token があるとき",
+            ),
+            pytest.param(None, "https://github.com/o/r.git", id="token が無いとき"),
+        ],
+    )
+    def test_tokenの有無でclone_URLを出し分ける(self, tmp_path, token, expected_url):
         lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
         calls, fake = self._fake_subprocess_run("data/defaults.yaml")
         with patch("seed_game_config.subprocess.run", side_effect=fake):
-            seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", "TSTTOKEN")
+            seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", token)
         remote_calls = [c for c in calls if c[:2] == ["git", "remote"]]
-        assert "x-access-token:TSTTOKEN@" in remote_calls[0][-1]
-
-    def test_tokenが無いとき素のGitHub_URLでcloneする(self, tmp_path):
-        lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
-        calls, fake = self._fake_subprocess_run("data/defaults.yaml")
-        with patch("seed_game_config.subprocess.run", side_effect=fake):
-            seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", None)
-        remote_calls = [c for c in calls if c[:2] == ["git", "remote"]]
-        assert remote_calls[0][-1] == "https://github.com/o/r.git"
+        assert remote_calls[0][-1] == expected_url
 
     def test_取得後に期待ファイルが無いときstale_lockとしてSystemExitで中断する(self, tmp_path):
         lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
@@ -245,7 +247,7 @@ class Testseed元の解決:
         """
         return argparse.Namespace(source=source, fetch=fetch, lock=lock, token=token)
 
-    def test_sourceのファイルが存在するときそのpathが使われる(self, tmp_path):
+    def test_sourceのファイルが存在するときそのパスが使われる(self, tmp_path):
         source = tmp_path / "defaults.yaml"
         source.write_text("defaults:\n  max_hp:\n    value: 30\n")
         args = self._namespace(source=str(source))
