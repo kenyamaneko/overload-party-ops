@@ -38,9 +38,9 @@
 update」を drift として通知しない。
 
 現在の主用途: dev/stg の Cloud SQL `activation_policy` は nightly-shutdown や
-Slack の `/db-stop`・`/db-start` で Terraform 外から書き換えるため、差分が
-出るのは日常運用。prod は suppress を設定しないので、同じ属性でも drift として
-通知される（= 意図しない停止を検知できる）。
+GitHub Actions の手動 workflow_dispatch (`cloudsql-activation.yaml`) で
+Terraform 外から書き換えるため、差分が出るのは日常運用。prod は suppress を
+設定しないので、同じ属性でも drift として通知される（= 意図しない停止を検知できる）。
 
 ルールは以下の条件すべてを満たすときだけ抑止に使われる:
 

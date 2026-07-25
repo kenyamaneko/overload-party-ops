@@ -2,7 +2,7 @@
   environments:
     - name: google-cloud/dev
       path: providers/google-cloud/env/dev
-      # dev は夜間停止（nightly-shutdown）・Slack /db-stop で
+      # dev は夜間停止（nightly-shutdown）・GitHub Actions の手動 workflow_dispatch で
       # Cloud SQL の activation_policy を Terraform 外から落とす運用のため
       # その差分だけでは drift として扱わない。他属性との複合差分は検知する。
       suppress:

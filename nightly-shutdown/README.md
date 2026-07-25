@@ -24,8 +24,6 @@ ADR「ノードプールスケーリング戦略とGKEの所有権」の所有�
 - `overload-party-k8s/env-lifecycle.yaml` (action=up)
 - `overload-party-infra/cloudsql-activation.yaml` (action=up)
 
-Slack コマンド `/gke-up <env>` / `/db-start <env>` でも実行可能。
-
 ## 必要なシークレット / 変数
 
 本ワークフローは他リポへの `workflow_dispatch` のみ行う:
