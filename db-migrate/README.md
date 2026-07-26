@@ -14,8 +14,10 @@ DB スキーマはサービスごとに分割されている。DDL の所在:
 | `shop` | overload-party-shop | `db/schema.sql` |
 | `scenario` | overload-party-scenario | `db/schema.sql` |
 | `gateway` | overload-party-gateway | `db/schema.sql` |
+| `news` | overload-party-news | `db/schema.sql` |
+| `support` | overload-party-support | `db/schema.sql` |
 
-matchmaking は DB を持たない (Redis + Pub/Sub のみ)。newsfeed も RDB スキーマを持たない。ゲーム動的設定値 (`game_config`) は Cloud Firestore で別管理。
+matchmaking は DB を持たない (Redis + Pub/Sub のみ)。ゲーム動的設定値 (`game_config`) は Cloud Firestore で別管理。
 
 ## 仕組み
 
@@ -24,7 +26,7 @@ matchmaking は DB を持たない (Redis + Pub/Sub のみ)。newsfeed も RDB �
 3. psqldef + `sqldef.yml` の `target_schema` で各サービススキーマを宣言的に diff → ALTER 適用
 4. `grant_iam.sql` を psql で実行して IAM user 権限を付与 (per-schema RW)
 
-psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と union の差分を自動で計算・適用する。union は常に「望ましい全体像」なので、サービスを追加したら lock file に 1 行足せば次のマイグレーションで新スキーマが作られる。
+psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と union の差分を自動で計算・適用する。union は常に「望ましい全体像」なので、サービスを追加したら `schemas.lock.yaml` にエントリを足し、`sqldef.yml` の `target_schema` にスキーマ名を追加すれば次のマイグレーションで新スキーマが作られる。
 
 > psqldef の upstream バグ (dropped column で NULL スキャン) に対するパッチを Dockerfile 内で適用している。
 

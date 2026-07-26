@@ -2,9 +2,9 @@
 #
 # 各サービスリポの DDL を union して Cloud SQL に適用するためのソース一覧。
 # このファイルは `fetch-schemas.py` が参照し、列挙順でそのまま concat するため、
-# 依存順を壊さないこと。各サービススキーマは自前の update_updated_at() を定義するため
-# 他スキーマへの依存は無い。app-level FK (gateway.game_players → battle.games) のみ
-# gateway を battle の後に配置する。
+# 依存順を壊さないこと。各サービススキーマは自前の updated_at 更新用トリガー関数を
+# 定義するため他スキーマへの依存は無い。app-level FK (gateway.game_players →
+# battle.games) のみ gateway を battle の後に配置する。
 #
 # ref には再現性のため commit SHA を入れてもよい。通常は main を pin する。
 # main 以外に振れるのは、事故復旧 / 特定リビジョンに固定した stg 検証 / bisect 時のみ。
@@ -59,3 +59,15 @@ schemas:
     ref: main
     # scenario.scenario_episodes / scenario.episode_required_factions /
     # scenario.player_story_progress
+
+  - name: news
+    repo: kenyamaneko/overload-party-news
+    path: db/schema.sql
+    ref: main
+    # news.news_articles / news.news_article_translations
+
+  - name: support
+    repo: kenyamaneko/overload-party-support
+    path: db/schema.sql
+    ref: main
+    # support.announcements / support.announcement_translations / support.inquiries
