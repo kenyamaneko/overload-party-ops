@@ -5,7 +5,7 @@
 # on version), which risks either missing or accidentally dropping tables in
 # non-target schemas.
 #
-# The DB has 6 service-owned schemas. All are listed here so that
+# The DB has 8 service-owned schemas. All are listed here so that
 # psqldef manages them as a unit when applying the schema union.
 #
 # See https://github.com/sqldef/sqldef/blob/main/cmd-psqldef.md for details.
@@ -16,4 +16,5 @@ target_schema: |
   scenario
   battle
   gateway
-  newsfeed
+  news
+  support
