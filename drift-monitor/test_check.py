@@ -527,8 +527,6 @@ class Testmainのsuppress適用:
     """
 
     def test_dev相当でactivation_policy単独差分は差分なし通知になる(self):
-        # nightly-shutdown / /db-stop が起こす常態的 drift を毎朝 drift として騒がないための
-        # 核心仕様。毎朝の死活通知は送るが、内容は「差分なし」になる。
         plan_json = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
