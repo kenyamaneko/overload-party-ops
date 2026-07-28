@@ -27,11 +27,22 @@ jobs:
         id: detect
         uses: kenyamaneko/overload-party-common/.github/actions/detect-code-change@main
 
+  # ツールごとに pytest.ini を持ち、同名のテストモジュール (test_check.py) が複数の
+  # ディレクトリにあるため、リポジトリ全体をまとめて収集せずツール単位で実行する。
   test:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubicloud-standard-2
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        tool:
+          - cost-monitor
+          - cross-repo-seeds
+          - db-migrate
+          - drift-monitor
+          - firestore-seed
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,20 +51,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Python dependencies
-        run: pip install pyyaml pytest
-      - name: Run db-migrate tests
-        run: python3 -m pytest db-migrate/ -v --junitxml=pytest-db-migrate.xml
-      - name: Report db-migrate test results
+        run: pip install pyyaml pytest google-cloud-firestore
+      - name: Run tests
+        run: python3 -m pytest ${{ matrix.tool }}/ -v --junitxml=pytest.xml
+      - name: Report test results
         if: ${{ !cancelled() }}
         uses: kenyamaneko/overload-party-common/.github/actions/python-test-report@main
         with:
-          xml-path: pytest-db-migrate.xml
-          title: db-migrate テスト結果
-      - name: Run cross-repo-seeds tests
-        run: python3 -m pytest cross-repo-seeds/ -v --junitxml=pytest-cross-repo-seeds.xml
-      - name: Report cross-repo-seeds test results
-        if: ${{ !cancelled() }}
-        uses: kenyamaneko/overload-party-common/.github/actions/python-test-report@main
-        with:
-          xml-path: pytest-cross-repo-seeds.xml
-          title: cross-repo-seeds テスト結果
+          xml-path: pytest.xml
+          title: ${{ matrix.tool }} テスト結果

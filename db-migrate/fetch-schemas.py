@@ -50,8 +50,16 @@ def _load_yaml(path: Path) -> dict:
 
 
 def _run(cmd: list[str], cwd: Path | None = None) -> None:
-    """外部コマンドを実行します。"""
-    print("+", " ".join(cmd), flush=True)
+    """外部コマンドを実行します。
+
+    Args:
+        cmd: 実行するコマンドと引数。
+        cwd: コマンドを実行する作業ディレクトリ。
+
+    Raises:
+        subprocess.CalledProcessError: コマンドが非ゼロで終了した場合。
+    """
+    # clone の URL に認証トークンが埋め込まれるため、コマンド列は出力しない
     subprocess.run(cmd, cwd=cwd, check=True)
 
 

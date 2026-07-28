@@ -47,6 +47,18 @@ class TestShopのcard_pack_id抽出:
         with pytest.raises(ValueError, match="top-level 'products' key is required"):
             v.load_shop_card_pack_refs(path)
 
+    @pytest.mark.parametrize(
+        "yaml_text",
+        [
+            pytest.param("products:\n", id="products: の値が空のとき、参照 0 件として空の辞書になる"),
+            pytest.param("products: []\n", id="products が空リストのとき、空の辞書になる"),
+        ],
+    )
+    def test_productsが空のとき抽出結果は空の辞書になる(self, tmp_path: Path, yaml_text):
+        path = tmp_path / "products.yaml"
+        path.write_text(yaml_text, encoding="utf-8")
+        assert v.load_shop_card_pack_refs(path) == {}
+
 
 class TestCardPackの一覧抽出:
     def test_全てのpack_idを抽出する(self, tmp_path: Path):
@@ -64,6 +76,18 @@ class TestCardPackの一覧抽出:
         _write_yaml(path, {"other_key": []})
         with pytest.raises(ValueError, match="top-level 'packs' key is required"):
             v.load_card_pack_ids(path)
+
+    @pytest.mark.parametrize(
+        "yaml_text",
+        [
+            pytest.param("packs:\n", id="packs: の値が空のとき、pack 0 件として空集合になる"),
+            pytest.param("packs: []\n", id="packs が空リストのとき、空集合になる"),
+        ],
+    )
+    def test_packsが空のとき抽出結果は空集合になる(self, tmp_path: Path, yaml_text):
+        path = tmp_path / "card_packs.yaml"
+        path.write_text(yaml_text, encoding="utf-8")
+        assert v.load_card_pack_ids(path) == set()
 
 
 class Test欠落参照の検出:
