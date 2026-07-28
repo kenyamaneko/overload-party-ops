@@ -92,6 +92,7 @@ jobs:
           python3 db-migrate/fetch-schemas.py \
             --lock db-migrate/schemas.lock.yaml \
             --out db-migrate/sql/schema_union.sql \
+            --seed-out db-migrate/sql/seed_union.sql \
             --grant-src db-migrate/grant_iam.sql \
             --workdir /tmp/schema-src-new
 

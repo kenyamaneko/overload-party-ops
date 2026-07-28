@@ -14,6 +14,10 @@
 #   2. PR を作成し、CI で `fetch-schemas.py` が union をビルドできることを確認
 #   3. main merge 後の自動 db-migrate (dev) で psqldef が差分を適用する
 #   4. stg / prod は手動 workflow_dispatch で環境ごとに実行
+#
+# seeds はマスタデータの投入 SQL で、schema と grant の後に列挙順で適用される。
+# FK を張る側が後になるよう並べること。upsert で書かれているため繰り返し適用しても
+# 現在の内容に揃うだけで、既存行は失われない。
 
 schemas:
   - name: account
@@ -45,6 +49,12 @@ schemas:
     path: db/schema.sql
     ref: main
     # card.card_definitions / card.player_cards / card.decks / card.deck_cards
+    seeds:
+      # card.initiatives が card.products を参照するため products を先に置く。
+      - db/seed/cards_seed.sql
+      - db/seed/products_seed.sql
+      - db/seed/initiatives_seed.sql
+      - db/seed/card_packs_seed.sql
 
   - name: shop
     repo: kenyamaneko/overload-party-shop
@@ -52,6 +62,8 @@ schemas:
     ref: main
     # shop.products / shop.subscriptions / shop.one_time_purchases /
     # shop.cosmetic_items / shop.player_items
+    seeds:
+      - db/seed/products_seed.sql
 
   - name: scenario
     repo: kenyamaneko/overload-party-scenario
