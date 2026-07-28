@@ -10,6 +10,7 @@ from check import (
     _diff_paths,
     _strip_init_noise,
     clone_repo,
+    format_action_label,
     format_summary,
     load_targets,
     notify_slack,
@@ -309,11 +310,42 @@ class Testサマリの組み立て:
         assert "r.10 will be created" not in summary
         assert "他 5 リソース" in summary
 
+    def test_リソースが10件ちょうどのとき全件が列挙され集約行は付かない(self):
+        # 10 件超のときだけ集約する境界の下側。
+        changes = [
+            _resource_change(f"r.{i}", "t", ["create"], None, {})
+            for i in range(10)
+        ]
+        summary = format_summary(changes)
+        assert "r.9 will be created" in summary
+        assert "他" not in summary
+
+    def test_リソースが11件のとき先頭10件と他1リソースに集約される(self):
+        # 10 件超のときだけ集約する境界の上側。
+        changes = [
+            _resource_change(f"r.{i}", "t", ["create"], None, {})
+            for i in range(11)
+        ]
+        summary = format_summary(changes)
+        assert "r.9 will be created" in summary
+        assert "r.10" not in summary
+        assert "他 1 リソース" in summary
+
     def test_visibleが空ならPlanParseErrorになる(self):
         # 「visible ゼロ」は上位で「suppress で全部吸収 → no drift」として扱う分岐に倒すべきで、
         # summary に進ませるのは呼び出しミス。silent に空文字を返さない。
         with pytest.raises(PlanParseError):
             format_summary([])
+
+    def test_アクションが既知の5パターン外のときPlanParseErrorになる(self):
+        with pytest.raises(PlanParseError, match="未知の actions"):
+            format_action_label(["forget"])
+
+    def test_createとdeleteの順で並ぶreplaceもreplacedと表示される(self):
+        changes = [_resource_change("a", "t", ["create", "delete"], {}, {})]
+        summary = format_summary(changes)
+        assert "will be replaced" in summary
+        assert "Plan: 1 to add, 0 to change, 1 to destroy." in summary
 
 
 class Testtargets_yamlの読み込み:
@@ -466,8 +498,63 @@ def _run_main_with_plan_result(
     plan_exit_code: int,
     plan_output: str,
     suppress: list[dict] | None = None,
+    *,
+    env_vars: dict | None = None,
+    clone_result: str | None = "/tmp/r",
+    is_dir: bool = True,
 ) -> dict:
     """main() を 1 target で実行し、notify_slack が呼ばれたかと渡された message を返す。
+
+    Args:
+        plan_exit_code: run_terraform_plan が返す exit code。
+        plan_output: run_terraform_plan が返す output。
+        suppress: targets.yaml の suppress ルール。None なら未指定。
+        env_vars: 環境変数の上書き。None なら GITHUB_TOKEN / SLACK_WEBHOOK_URL が
+            揃った状態で実行する。
+        clone_result: clone_repo の戻り値。None なら clone 失敗を模す。
+        is_dir: os.path.isdir の戻り値。
+
+    Returns:
+      {"called": bool, "message": str, "exit_code": int | None}
+    """
+    captured: dict = {"called": False, "message": ""}
+
+    def fake_notify(webhook_url: str, message: str) -> None:
+        captured["called"] = True
+        captured["message"] = message
+
+    if env_vars is None:
+        env_vars = {"GITHUB_TOKEN": "t", "SLACK_WEBHOOK_URL": "https://webhook"}
+    env_def = {"name": "e", "path": "p"}
+    if suppress is not None:
+        env_def["suppress"] = suppress
+    targets = [{"repo": "r", "environments": [env_def]}]
+
+    exit_code = None
+    with patch.dict("os.environ", env_vars, clear=True), \
+         patch("check.load_targets", return_value=targets), \
+         patch("check.clone_repo", return_value=clone_result), \
+         patch("check.os.makedirs"), \
+         patch("check.os.path.isdir", return_value=is_dir), \
+         patch("check.run_terraform_plan", return_value=(plan_exit_code, plan_output)), \
+         patch("check.notify_slack", side_effect=fake_notify):
+        try:
+            check.main()
+        except SystemExit as e:
+            exit_code = e.code
+    captured["exit_code"] = exit_code
+    return captured
+
+
+def _run_main_with_targets(
+    targets: list[dict],
+    plan_results: list[tuple[int, str]],
+) -> dict:
+    """main() を複数 target・複数 env で実行し、Slack へ渡った message を返す。
+
+    Args:
+        targets: load_targets が返す target 定義のリスト。
+        plan_results: run_terraform_plan が target/env の走査順で返す (exit_code, output) の列。
 
     Returns:
       {"called": bool, "message": str}
@@ -478,18 +565,14 @@ def _run_main_with_plan_result(
         captured["called"] = True
         captured["message"] = message
 
-    env = {"GITHUB_TOKEN": "t", "SLACK_WEBHOOK_URL": "https://webhook"}
-    env_def = {"name": "e", "path": "p"}
-    if suppress is not None:
-        env_def["suppress"] = suppress
-    targets = [{"repo": "r", "environments": [env_def]}]
+    env_vars = {"GITHUB_TOKEN": "t", "SLACK_WEBHOOK_URL": "https://webhook"}
 
-    with patch.dict("os.environ", env, clear=False), \
+    with patch.dict("os.environ", env_vars, clear=True), \
          patch("check.load_targets", return_value=targets), \
          patch("check.clone_repo", return_value="/tmp/r"), \
          patch("check.os.makedirs"), \
          patch("check.os.path.isdir", return_value=True), \
-         patch("check.run_terraform_plan", return_value=(plan_exit_code, plan_output)), \
+         patch("check.run_terraform_plan", side_effect=plan_results), \
          patch("check.notify_slack", side_effect=fake_notify):
         check.main()
     return captured
@@ -518,6 +601,38 @@ class Testmainのエラー伝播:
         assert "r/e" in result["message"]
         assert "Plan: 1 to add, 0 to change, 0 to destroy." in result["message"]
         assert "google_storage_bucket.a will be created" in result["message"]
+
+    def test_GITHUB_TOKEN未設定のときexit_1で落ちてSlackへは送らない(self):
+        result = _run_main_with_plan_result(0, "", env_vars={"SLACK_WEBHOOK_URL": "https://webhook"})
+        assert result["called"] is False
+        assert result["exit_code"] == 1
+
+    def test_SLACK_WEBHOOK_URL未設定のときexit_1で落ちる(self):
+        result = _run_main_with_plan_result(0, "", env_vars={"GITHUB_TOKEN": "t"})
+        assert result["exit_code"] == 1
+
+    def test_リポジトリのcloneに失敗したときclone_failedがplan実行エラー通知に載る(self):
+        result = _run_main_with_plan_result(0, "", clone_result=None)
+        assert "plan 実行エラー" in result["message"]
+        assert "r/-" in result["message"]
+        assert "clone failed" in result["message"]
+
+    def test_環境ディレクトリが無いときdirectory_not_foundがplan実行エラー通知に載る(self):
+        result = _run_main_with_plan_result(0, "", is_dir=False)
+        assert "r/e" in result["message"]
+        assert "directory not found" in result["message"]
+
+    def test_drift検出後のplan_JSONが壊れているときパース失敗がplan実行エラー通知に載る(self):
+        result = _run_main_with_plan_result(2, "not a json")
+        assert "plan JSON のパース失敗" in result["message"]
+
+    def test_plan未知アクションのときsummary組立失敗がplan実行エラー通知に載る(self):
+        plan_json = _plan_json(
+            _resource_change("google_storage_bucket.a", "google_storage_bucket", ["forget"], {}, {}),
+        )
+        result = _run_main_with_plan_result(2, plan_json)
+        assert "summary 組立失敗" in result["message"]
+        assert "未知の actions" in result["message"]
 
 
 class Testmainのsuppress適用:
@@ -585,3 +700,41 @@ class Testmainのsuppress適用:
         result = _run_main_with_plan_result(0, "", suppress=ACTIVATION_POLICY_SUPPRESS)
         assert result["called"] is True
         assert "差分なし" in result["message"]
+
+
+class Testmainの複数対象集約:
+    """main() は複数 target・複数 env をループで処理し 1 通に集約する。単一 target 固定の
+    ヘルパでは集約ロジック (複数ラベルの同時整形・drift とエラーの混在) を検証できない。
+    """
+
+    def test_2リポで片方にdrift片方にplanエラーがあるときSlack_payload1通に警告とエラーがまとまる(self):
+        targets = [
+            {"repo": "r1", "environments": [{"name": "e1", "path": "p"}]},
+            {"repo": "r2", "environments": [{"name": "e2", "path": "p"}]},
+        ]
+        drift_plan = _plan_json(
+            _resource_change("google_storage_bucket.a", "google_storage_bucket", ["create"], None, {}),
+        )
+        result = _run_main_with_targets(targets, [(2, drift_plan), (1, "provider auth failed")])
+        assert "差分を検出" in result["message"]
+        assert "r1/e1" in result["message"]
+        assert "google_storage_bucket.a will be created" in result["message"]
+        assert "plan 実行エラー" in result["message"]
+        assert "r2/e2" in result["message"]
+        assert "provider auth failed" in result["message"]
+
+    def test_同一リポの複数環境でdriftが出たとき環境ごとのサマリがSlack_payloadに全て載る(self):
+        targets = [
+            {"repo": "r1", "environments": [{"name": "e1", "path": "p"}, {"name": "e2", "path": "p"}]},
+        ]
+        plan_e1 = _plan_json(
+            _resource_change("google_storage_bucket.a", "google_storage_bucket", ["create"], None, {}),
+        )
+        plan_e2 = _plan_json(
+            _resource_change("google_storage_bucket.b", "google_storage_bucket", ["create"], None, {}),
+        )
+        result = _run_main_with_targets(targets, [(2, plan_e1), (2, plan_e2)])
+        assert "r1/e1" in result["message"]
+        assert "r1/e2" in result["message"]
+        assert "google_storage_bucket.a will be created" in result["message"]
+        assert "google_storage_bucket.b will be created" in result["message"]

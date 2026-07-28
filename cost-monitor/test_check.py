@@ -4,6 +4,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+import check
 from check import (
     _build_error_header,
     build_actions_run_url,
@@ -14,6 +15,7 @@ from resources import (
     CommandError,
     _is_not_found,
     _run_cmd,
+    check_cloudsql,
     check_environment,
     check_gke_nodepool,
     check_ingress,
@@ -21,6 +23,9 @@ from resources import (
     check_psc,
     check_static_ips,
     format_cmd_failure,
+    run_gcloud,
+    run_gcloud_value,
+    run_kubectl_json,
     setup_gke_credentials,
 )
 
@@ -137,6 +142,33 @@ class TestActions実行URLの組み立て:
     def test_環境変数からActions実行URLを組み立てる(self, env, want):
         with patch.dict(os.environ, env, clear=True):
             assert build_actions_run_url() == want
+
+
+class TestCloudSQLの稼働チェック:
+    def test_stateがRUNNABLEのときCloudSQLの時間課金がコスト警告に載る(self):
+        with patch("resources.run_gcloud_value", return_value="RUNNABLE"):
+            costs, errors = check_cloudsql("proj")
+        assert costs == ["Cloud SQL `overload-party-db` が RUNNABLE ($0.19/hr)"]
+        assert errors == []
+
+    def test_インスタンスが存在しないときコストもエラーも報告しない(self):
+        with patch("resources.run_gcloud_value", return_value=""):
+            costs, errors = check_cloudsql("proj")
+        assert costs == []
+        assert errors == []
+
+    @pytest.mark.parametrize(
+        "state",
+        [
+            pytest.param("SUSPENDED", id="state が SUSPENDED のとき、稼働コストなしとして何も報告しない"),
+            pytest.param("STOPPED", id="state が STOPPED のとき、稼働コストなしとして何も報告しない"),
+        ],
+    )
+    def test_非稼働状態のCloudSQLはコストとして扱われない(self, state):
+        with patch("resources.run_gcloud_value", return_value=state):
+            costs, errors = check_cloudsql("proj")
+        assert costs == []
+        assert errors == []
 
 
 class TestGKEノードプールの稼働チェック:
@@ -459,6 +491,21 @@ class Test外部コマンド実行ラッパー:
             with pytest.raises(CommandError, match=r"mylabel 実行失敗 \(exit 42\)"):
                 _run_cmd(["fake"], label="mylabel")
 
+    def test_JSON出力ラッパはgcloud引数の末尾にJSON形式を指定して実行する(self):
+        with patch("resources.subprocess.run", return_value=_subprocess_result(0, stdout="[]")) as run:
+            run_gcloud("sql", "instances", "list")
+        assert run.call_args.args[0] == ["gcloud", "sql", "instances", "list", "--format=json"]
+
+    def test_テキスト出力ラッパはgcloud引数をそのまま実行する(self):
+        with patch("resources.subprocess.run", return_value=_subprocess_result(0, stdout="RUNNABLE")) as run:
+            run_gcloud_value("sql", "instances", "describe", "TST")
+        assert run.call_args.args[0] == ["gcloud", "sql", "instances", "describe", "TST"]
+
+    def test_kubectlラッパは引数の末尾にJSON形式を指定して実行する(self):
+        with patch("resources.subprocess.run", return_value=_subprocess_result(0, stdout="{}")) as run:
+            run_kubectl_json("get", "ingress")
+        assert run.call_args.args[0] == ["kubectl", "get", "ingress", "-o", "json"]
+
 
 class Testnamespace存在チェック:
     """stderr と stdout を combined して判定する仕様が要所。permission denied を silent に
@@ -578,7 +625,6 @@ class Test各チェックのCommandErrorメッセージ:
     """
 
     def test_check_cloudsqlのCommandErrorは読めるメッセージをerrorsに積む(self):
-        from resources import check_cloudsql
         with patch("resources.run_gcloud_value", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_cloudsql("proj")
         assert costs == []
@@ -645,3 +691,114 @@ class Testエラーヘッダの組み立て:
             assert "2026-04-17" in h
             assert ":x:" in h
             assert "チェックエラー" in h
+
+
+def _run_cost_main(
+    env_results: dict[str, tuple[list[str], list[str]]],
+    *,
+    gke_auth_err: str | None = None,
+) -> dict:
+    """main() を環境ごとの (costs, errors) 指定で実行し、Slack へ渡った message を捕捉する。
+
+    Args:
+        env_results: 環境名 -> (costs, errors) の辞書。ENVIRONMENTS_JSON もこのキー
+            集合から組み立てる。
+        gke_auth_err: setup_gke_credentials の失敗詳細。None なら認証成功として扱う。
+
+    Returns:
+        {"called": bool, "call_count": int, "message": str, "exit_code": int | None}
+    """
+    captured: dict = {"called": False, "call_count": 0, "message": ""}
+
+    def fake_notify(webhook_url: str, message: str) -> None:
+        captured["called"] = True
+        captured["call_count"] += 1
+        captured["message"] = message
+
+    def fake_check_environment(env: str, project: str, *, is_gke_available: bool = True):
+        return env_results[env]
+
+    environments_json = json.dumps({env: f"proj-{env}" for env in env_results})
+    env_vars = {"SLACK_WEBHOOK_URL": "https://webhook", "ENVIRONMENTS_JSON": environments_json}
+
+    exit_code = None
+    with patch.dict(os.environ, env_vars, clear=True), \
+         patch("check.setup_gke_credentials", return_value=(gke_auth_err is None, gke_auth_err)), \
+         patch("check.check_environment", side_effect=fake_check_environment), \
+         patch("check.notify_slack", side_effect=fake_notify):
+        try:
+            check.main()
+        except SystemExit as e:
+            exit_code = e.code
+    captured["exit_code"] = exit_code
+    return captured
+
+
+class Testコスト確認mainの通知:
+    """個々のチェック関数は戻り値までしか見ないため、main() の集約・メッセージ組み立てで
+    内容が欠落しても検知できない。ユーザーが異常に気付ける唯一の経路である Slack payload を
+    起点に保証する。
+    """
+
+    def test_SLACK_WEBHOOK_URL未設定のときexit_1で落ちてSlackへは送らない(self):
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("check.notify_slack") as notify:
+            with pytest.raises(SystemExit) as exc:
+                check.main()
+        assert exc.value.code == 1
+        notify.assert_not_called()
+
+    def test_監視対象の環境が0件のときexit_1で落ちる(self):
+        env_vars = {"SLACK_WEBHOOK_URL": "https://webhook", "ENVIRONMENTS_JSON": "{}"}
+        with patch.dict(os.environ, env_vars, clear=True):
+            with pytest.raises(SystemExit) as exc:
+                check.main()
+        assert exc.value.code == 1
+
+    def test_GKE認証に失敗したとき共有見出しのエラーとして通知されexit_1になる(self):
+        result = _run_cost_main({"dev": ([], [])}, gke_auth_err="GKE 認証失敗 (詳細はログ)")
+        assert result["called"] is True
+        assert "*(shared)*" in result["message"]
+        assert "GKE 認証失敗 (詳細はログ)" in result["message"]
+        assert "チェックエラー" in result["message"]
+        assert result["exit_code"] == 1
+
+    def test_コストもエラーも無いとき稼働中リソースなしの確認通知を送り正常終了する(self):
+        result = _run_cost_main({"dev": ([], [])})
+        assert result["called"] is True
+        assert ":white_check_mark:" in result["message"]
+        assert "稼働中リソースなし" in result["message"]
+        assert result["exit_code"] is None
+        assert result["call_count"] == 1
+
+    def test_コストがあるとき環境見出しの下に各リソースが箇条書きで載る(self):
+        result = _run_cost_main({"dev": (["Cloud SQL TST"], [])})
+        assert "コスト警告" in result["message"]
+        assert "*dev*" in result["message"]
+        assert "  • Cloud SQL TST" in result["message"]
+        assert result["exit_code"] is None
+
+    def test_エラーがあるときエラーヘッダ付きで通知しexit_1になる(self):
+        result = _run_cost_main({"dev": ([], ["Node pool TST チェック失敗"])})
+        assert "チェックエラー" in result["message"]
+        assert "  • Node pool TST チェック失敗" in result["message"]
+        assert result["exit_code"] == 1
+
+    def test_環境が複数のとき環境ごとのコストが1通にまとまる(self):
+        result = _run_cost_main({
+            "dev": (["Cloud SQL TST"], []),
+            "stg": (["GKE node pool TST"], []),
+        })
+        assert "*dev*" in result["message"]
+        assert "*stg*" in result["message"]
+        assert "Cloud SQL TST" in result["message"]
+        assert "GKE node pool TST" in result["message"]
+
+    def test_コストとエラーが混在するとき警告とエラーヘッダの両方が1通に載りexit_1になる(self):
+        result = _run_cost_main({
+            "dev": (["Cloud SQL TST"], []),
+            "stg": ([], ["Node pool TST チェック失敗"]),
+        })
+        assert "コスト警告" in result["message"]
+        assert "チェックエラー" in result["message"]
+        assert result["exit_code"] == 1
