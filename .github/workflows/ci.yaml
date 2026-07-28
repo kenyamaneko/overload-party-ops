@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.detect.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect code change
+        id: detect
+        uses: kenyamaneko/overload-party-common/.github/actions/detect-code-change@main
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python dependencies
+        run: pip install pyyaml pytest
+      - name: Run db-migrate tests
+        run: python3 -m pytest db-migrate/ -v --junitxml=pytest-db-migrate.xml
+      - name: Report db-migrate test results
+        if: ${{ !cancelled() }}
+        uses: kenyamaneko/overload-party-common/.github/actions/python-test-report@main
+        with:
+          xml-path: pytest-db-migrate.xml
+          title: db-migrate テスト結果
+      - name: Run cross-repo-seeds tests
+        run: python3 -m pytest cross-repo-seeds/ -v --junitxml=pytest-cross-repo-seeds.xml
+      - name: Report cross-repo-seeds test results
+        if: ${{ !cancelled() }}
+        uses: kenyamaneko/overload-party-common/.github/actions/python-test-report@main
+        with:
+          xml-path: pytest-cross-repo-seeds.xml
+          title: cross-repo-seeds テスト結果
