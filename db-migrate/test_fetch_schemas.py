@@ -62,35 +62,63 @@ class Test単一ファイルのsparse_clone:
         Returns:
             _run と同じシグネチャの callable。
         """
-        def fake_run(cmd, cwd=None):
+        def fake_run(cmd, cwd=None, env=None):
             if cmd[:2] == ["git", "checkout"]:
                 target = Path(cwd) / file_path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text("CREATE TABLE t (id INT);")
         return fake_run
 
-    @pytest.mark.parametrize(
-        ("token", "expected_url"),
-        [
-            pytest.param(
-                "TSTTOKEN", "https://x-access-token:TSTTOKEN@github.com/o/r.git",
-                id="token があるとき",
-            ),
-            pytest.param(None, "https://github.com/o/r.git", id="token が無いとき"),
-        ],
-    )
-    def test_tokenの有無でclone_URLを出し分ける(self, tmp_path, token, expected_url):
-        recorded_urls = []
+    def _record_git_calls(self, tmp_path, token):
+        """_clone_sparse を fake の _run で実行し、渡されたコマンドと環境変数を記録する。
+
+        Args:
+            tmp_path: clone 先ディレクトリ。
+            token: _clone_sparse に渡す GitHub PAT。
+
+        Returns:
+            (コマンド列のリスト, 環境変数のリスト) の組。
+        """
+        commands = []
+        envs = []
         writes_file = self._fake_checkout_writes_file("db/schema.sql")
 
-        def fake_run(cmd, cwd=None):
-            if cmd[:2] == ["git", "remote"]:
-                recorded_urls.append(cmd[-1])
+        def fake_run(cmd, cwd=None, env=None):
+            commands.append(cmd)
+            envs.append(env)
             writes_file(cmd, cwd=cwd)
 
         with patch("fetch_schemas._run", side_effect=fake_run):
             fetch_schemas._clone_sparse("o/r", "main", "db/schema.sql", tmp_path, token)
-        assert recorded_urls == [expected_url]
+        return commands, envs
+
+    def test_tokenがあるとき取得元URLにtokenを含めない(self, tmp_path):
+        commands, _ = self._record_git_calls(tmp_path, "TSTTOKEN")
+
+        remote_calls = [c for c in commands if c[:2] == ["git", "remote"]]
+        assert remote_calls[0][-1] == "https://github.com/o/r.git"
+        assert not any("TSTTOKEN" in arg for cmd in commands for arg in cmd)
+
+    def test_tokenがあるときgitの設定として環境変数でtokenを渡す(self, tmp_path):
+        _, envs = self._record_git_calls(tmp_path, "TSTTOKEN")
+
+        assert envs[0]["GIT_CONFIG_COUNT"] == "1"
+        assert envs[0]["GIT_CONFIG_KEY_0"] == (
+            "url.https://x-access-token:TSTTOKEN@github.com/.insteadOf"
+        )
+        assert envs[0]["GIT_CONFIG_VALUE_0"] == "https://github.com/"
+
+    def test_呼び出し元の環境が既にgit設定を持つときSystemExitで中断する(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+        with pytest.raises(SystemExit, match="GIT_CONFIG_COUNT is already set"):
+            self._record_git_calls(tmp_path, "TSTTOKEN")
+
+    def test_tokenが無いとき認証の設定を付けない(self, tmp_path):
+        commands, envs = self._record_git_calls(tmp_path, None)
+
+        remote_calls = [c for c in commands if c[:2] == ["git", "remote"]]
+        assert remote_calls[0][-1] == "https://github.com/o/r.git"
+        assert "GIT_CONFIG_COUNT" not in envs[0]
 
     def test_git操作が失敗したときlockエントリ情報付きのSystemExitで中断する(self, tmp_path):
         with patch("fetch_schemas._run", side_effect=subprocess.CalledProcessError(1, ["git"])):
