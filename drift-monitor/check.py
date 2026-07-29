@@ -32,19 +32,50 @@ def load_targets() -> list[dict]:
     return yaml.safe_load(TARGETS_YAML.read_text())
 
 
-def run(args: list[str], cwd: str | None = None, timeout: int = 600) -> subprocess.CompletedProcess:
+def run(
+    args: list[str],
+    cwd: str | None = None,
+    timeout: int = 600,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     """外部コマンドを実行します。"""
-    return subprocess.run(args, capture_output=True, text=True, cwd=cwd, timeout=timeout)
+    return subprocess.run(args, capture_output=True, text=True, cwd=cwd, timeout=timeout, env=env)
+
+
+def github_auth_env(token: str) -> dict[str, str]:
+    """github.com への認証を git に渡す環境変数を組み立てます。
+
+    Args:
+        token: GitHub PAT。
+
+    Returns:
+        git の実行に渡す環境変数。
+
+    Raises:
+        SystemExit: 呼び出し元の環境が既に GIT_CONFIG_COUNT を設定している場合。
+    """
+    if "GIT_CONFIG_COUNT" in os.environ:
+        raise SystemExit(
+            "ERROR: GIT_CONFIG_COUNT is already set in the environment. "
+            "Overwriting it would silently drop the inherited git config entries."
+        )
+
+    # subprocess の例外はコマンド引数をそのままメッセージに含めるため、
+    # 認証情報を URL ではなく環境変数経由の git 設定として渡す
+    return os.environ | {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": f"url.https://x-access-token:{token}@github.com/.insteadOf",
+        "GIT_CONFIG_VALUE_0": "https://github.com/",
+    }
 
 
 def clone_repo(repo: str, token: str) -> str | None:
     """リポジトリを shallow clone します。"""
     dest = f"{CLONE_BASE}/{repo}"
-    result = run([
-        "git", "clone", "--depth=1",
-        f"https://x-access-token:{token}@github.com/{GITHUB_ORG}/{repo}.git",
-        dest,
-    ])
+    result = run(
+        ["git", "clone", "--depth=1", f"https://github.com/{GITHUB_ORG}/{repo}.git", dest],
+        env=github_auth_env(token),
+    )
     if result.returncode != 0:
         print(f"  [clone error] {repo}: {result.stderr.strip()}", file=sys.stderr)
         return None

@@ -32,6 +32,7 @@ ADR: overload-party-common/docs/adr/017-game-config-firestore.md
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import tempfile
@@ -69,6 +70,36 @@ def load_defaults(source_path: Path) -> dict[str, Any]:
     return result
 
 
+def github_auth_env(token: str | None) -> dict[str, str]:
+    """github.com への認証を git に渡す環境変数を組み立てる。
+
+    Args:
+        token: GitHub PAT。None のときは認証を付けず公開リポジトリとして扱う。
+
+    Returns:
+        git の実行に渡す環境変数。
+
+    Raises:
+        SystemExit: 呼び出し元の環境が既に GIT_CONFIG_COUNT を設定している場合。
+    """
+    env = os.environ.copy()
+    if not token:
+        return env
+
+    if "GIT_CONFIG_COUNT" in env:
+        raise SystemExit(
+            "ERROR: GIT_CONFIG_COUNT is already set in the environment. "
+            "Overwriting it would silently drop the inherited git config entries."
+        )
+
+    # subprocess の例外はコマンド引数をそのままメッセージに含めるため、
+    # 認証情報を URL ではなく環境変数経由の git 設定として渡す
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = f"url.https://x-access-token:{token}@github.com/.insteadOf"
+    env["GIT_CONFIG_VALUE_0"] = "https://github.com/"
+    return env
+
+
 def fetch_from_lock(lock_path: Path, workdir: Path, token: str | None) -> Path:
     """lock file に記載された ref で common リポの YAML を sparse-clone して取得する。"""
     with lock_path.open("r", encoding="utf-8") as f:
@@ -87,23 +118,20 @@ def fetch_from_lock(lock_path: Path, workdir: Path, token: str | None) -> Path:
     path = entry["path"]
     ref = entry.get("ref", "main")
 
-    url = (
-        f"https://x-access-token:{token}@github.com/{repo}.git"
-        if token
-        else f"https://github.com/{repo}.git"
-    )
+    url = f"https://github.com/{repo}.git"
+    env = github_auth_env(token)
 
     workdir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q"], cwd=workdir, check=True)
-    subprocess.run(["git", "remote", "add", "origin", url], cwd=workdir, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=workdir, env=env, check=True)
+    subprocess.run(["git", "remote", "add", "origin", url], cwd=workdir, env=env, check=True)
     subprocess.run(
-        ["git", "config", "core.sparseCheckout", "true"], cwd=workdir, check=True
+        ["git", "config", "core.sparseCheckout", "true"], cwd=workdir, env=env, check=True
     )
     sparse_file = workdir / ".git" / "info" / "sparse-checkout"
     sparse_file.parent.mkdir(parents=True, exist_ok=True)
     sparse_file.write_text(path + "\n", encoding="utf-8")
-    subprocess.run(["git", "fetch", "--depth=1", "origin", ref], cwd=workdir, check=True)
-    subprocess.run(["git", "checkout", "FETCH_HEAD"], cwd=workdir, check=True)
+    subprocess.run(["git", "fetch", "--depth=1", "origin", ref], cwd=workdir, env=env, check=True)
+    subprocess.run(["git", "checkout", "FETCH_HEAD"], cwd=workdir, env=env, check=True)
 
     target = workdir / path
     if not target.is_file():

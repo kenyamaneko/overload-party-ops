@@ -49,38 +49,66 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> None:
+def _github_auth_env(token: str | None) -> dict[str, str]:
+    """github.com への認証を git に渡す環境変数を組み立てます。
+
+    Args:
+        token: GitHub PAT。None のときは認証を付けず公開リポジトリとして扱う。
+
+    Returns:
+        git の実行に渡す環境変数。
+
+    Raises:
+        SystemExit: 呼び出し元の環境が既に GIT_CONFIG_COUNT を設定している場合。
+    """
+    env = os.environ.copy()
+    if not token:
+        return env
+
+    if "GIT_CONFIG_COUNT" in env:
+        raise SystemExit(
+            "ERROR: GIT_CONFIG_COUNT is already set in the environment. "
+            "Overwriting it would silently drop the inherited git config entries."
+        )
+
+    # subprocess の例外はコマンド引数をそのままメッセージに含めるため、
+    # 認証情報を URL ではなく環境変数経由の git 設定として渡す
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = f"url.https://x-access-token:{token}@github.com/.insteadOf"
+    env["GIT_CONFIG_VALUE_0"] = "https://github.com/"
+    return env
+
+
+def _run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     """外部コマンドを実行します。
 
     Args:
         cmd: 実行するコマンドと引数。
         cwd: コマンドを実行する作業ディレクトリ。
+        env: コマンドに渡す環境変数。None のとき現在の環境を引き継ぐ。
 
     Raises:
         subprocess.CalledProcessError: コマンドが非ゼロで終了した場合。
     """
-    # clone の URL に認証トークンが埋め込まれるため、コマンド列は出力しない
-    subprocess.run(cmd, cwd=cwd, check=True)
+    subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
 def _clone_sparse(repo: str, ref: str, file_paths: list[str], dest: Path, token: str | None) -> list[Path]:
     """GitHub リポジトリから指定ファイル群を shallow sparse-clone します。"""
     dest.mkdir(parents=True, exist_ok=True)
 
-    if token:
-        url = f"https://x-access-token:{token}@github.com/{repo}.git"
-    else:
-        url = f"https://github.com/{repo}.git"
+    url = f"https://github.com/{repo}.git"
+    env = _github_auth_env(token)
 
     try:
-        _run(["git", "init", "-q"], cwd=dest)
-        _run(["git", "remote", "add", "origin", url], cwd=dest)
-        _run(["git", "config", "core.sparseCheckout", "true"], cwd=dest)
+        _run(["git", "init", "-q"], cwd=dest, env=env)
+        _run(["git", "remote", "add", "origin", url], cwd=dest, env=env)
+        _run(["git", "config", "core.sparseCheckout", "true"], cwd=dest, env=env)
         sparse_file = dest / ".git" / "info" / "sparse-checkout"
         sparse_file.parent.mkdir(parents=True, exist_ok=True)
         sparse_file.write_text("".join(p + "\n" for p in file_paths), encoding="utf-8")
-        _run(["git", "fetch", "--depth=1", "origin", ref], cwd=dest)
-        _run(["git", "checkout", "FETCH_HEAD"], cwd=dest)
+        _run(["git", "fetch", "--depth=1", "origin", ref], cwd=dest, env=env)
+        _run(["git", "checkout", "FETCH_HEAD"], cwd=dest, env=env)
     except subprocess.CalledProcessError as e:
         raise SystemExit(
             f"ERROR: git operation failed for schemas.lock.yaml entry "

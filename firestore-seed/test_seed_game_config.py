@@ -92,19 +92,22 @@ class Testlock経由の取得:
             create_target: True なら checkout 相当のコマンド実行時に target を書く。
 
         Returns:
-            (calls, fake) のタプル。calls は呼び出された cmd のリスト。
+            (calls, envs, fake) のタプル。calls は呼び出された cmd、
+            envs は同じ順で渡された環境変数のリスト。
         """
         calls: list[list[str]] = []
+        envs: list[dict[str, str] | None] = []
 
-        def fake(cmd, cwd=None, check=None):
+        def fake(cmd, cwd=None, env=None, check=None):
             calls.append(cmd)
+            envs.append(env)
             if create_target and cmd[:2] == ["git", "checkout"]:
                 target = Path(cwd) / target_relpath
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text("defaults:\n  max_hp:\n    value: 30\n")
             return MagicMock()
 
-        return calls, fake
+        return calls, envs, fake
 
     _LOCK_ENTRY = "sources:\n  game_config:\n    repo: o/r\n    path: data/defaults.yaml\n"
 
@@ -120,40 +123,65 @@ class Testlock経由の取得:
 
     def test_refが無いときmainを取得する(self, tmp_path):
         lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
-        calls, fake = self._fake_subprocess_run("data/defaults.yaml")
+        calls, _, fake = self._fake_subprocess_run("data/defaults.yaml")
         with patch("seed_game_config.subprocess.run", side_effect=fake):
             seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", None)
         fetch_calls = [c for c in calls if c[:2] == ["git", "fetch"]]
         assert fetch_calls[0][-1] == "main"
 
-    @pytest.mark.parametrize(
-        ("token", "expected_url"),
-        [
-            pytest.param(
-                "TSTTOKEN", "https://x-access-token:TSTTOKEN@github.com/o/r.git",
-                id="token があるとき",
-            ),
-            pytest.param(None, "https://github.com/o/r.git", id="token が無いとき"),
-        ],
-    )
-    def test_tokenの有無でclone_URLを出し分ける(self, tmp_path, token, expected_url):
+    def test_tokenがあるとき取得元URLにtokenを含めない(self, tmp_path):
         lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
-        calls, fake = self._fake_subprocess_run("data/defaults.yaml")
+        calls, _, fake = self._fake_subprocess_run("data/defaults.yaml")
         with patch("seed_game_config.subprocess.run", side_effect=fake):
-            seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", token)
+            seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", "TSTTOKEN")
         remote_calls = [c for c in calls if c[:2] == ["git", "remote"]]
-        assert remote_calls[0][-1] == expected_url
+        assert remote_calls[0][-1] == "https://github.com/o/r.git"
+        assert not any("TSTTOKEN" in arg for cmd in calls for arg in cmd)
+
+    def test_tokenがあるときgitの設定として環境変数でtokenを渡す(self, tmp_path):
+        lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
+        _, envs, fake = self._fake_subprocess_run("data/defaults.yaml")
+        with patch("seed_game_config.subprocess.run", side_effect=fake):
+            seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", "TSTTOKEN")
+        assert envs[0]["GIT_CONFIG_COUNT"] == "1"
+        assert envs[0]["GIT_CONFIG_KEY_0"] == (
+            "url.https://x-access-token:TSTTOKEN@github.com/.insteadOf"
+        )
+        assert envs[0]["GIT_CONFIG_VALUE_0"] == "https://github.com/"
+
+    def test_呼び出し元の環境が既にgit設定を持つときSystemExitで中断する(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+        lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
+        _, _, fake = self._fake_subprocess_run("data/defaults.yaml")
+        with patch("seed_game_config.subprocess.run", side_effect=fake):
+            with pytest.raises(SystemExit, match="GIT_CONFIG_COUNT is already set"):
+                seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", "TSTTOKEN")
+
+    def test_tokenが無いとき認証の設定を付けない(self, tmp_path):
+        lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
+        _, envs, fake = self._fake_subprocess_run("data/defaults.yaml")
+        with patch("seed_game_config.subprocess.run", side_effect=fake):
+            seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", None)
+        assert "GIT_CONFIG_COUNT" not in envs[0]
+
+    def test_tokenが無いとき取得元URLは公開リポジトリのURLになる(self, tmp_path):
+        lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
+        calls, _, fake = self._fake_subprocess_run("data/defaults.yaml")
+        with patch("seed_game_config.subprocess.run", side_effect=fake):
+            seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", None)
+        remote_calls = [c for c in calls if c[:2] == ["git", "remote"]]
+        assert remote_calls[0][-1] == "https://github.com/o/r.git"
 
     def test_取得後に期待ファイルが無いときstale_lockとしてSystemExitで中断する(self, tmp_path):
         lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
-        _, fake = self._fake_subprocess_run("data/defaults.yaml", create_target=False)
+        _, _, fake = self._fake_subprocess_run("data/defaults.yaml", create_target=False)
         with patch("seed_game_config.subprocess.run", side_effect=fake):
             with pytest.raises(SystemExit, match="stale"):
                 seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", None)
 
     def test_取得が成功したとき取得したファイルのパスを返す(self, tmp_path):
         lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
-        _, fake = self._fake_subprocess_run("data/defaults.yaml")
+        _, _, fake = self._fake_subprocess_run("data/defaults.yaml")
         workdir = tmp_path / "work"
         with patch("seed_game_config.subprocess.run", side_effect=fake):
             result = seed_game_config.fetch_from_lock(lock_path, workdir, None)
