@@ -149,6 +149,14 @@ class Testlock経由の取得:
         )
         assert envs[0]["GIT_CONFIG_VALUE_0"] == "https://github.com/"
 
+    def test_呼び出し元の環境が既にgit設定を持つときSystemExitで中断する(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+        lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
+        _, _, fake = self._fake_subprocess_run("data/defaults.yaml")
+        with patch("seed_game_config.subprocess.run", side_effect=fake):
+            with pytest.raises(SystemExit, match="GIT_CONFIG_COUNT is already set"):
+                seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", "TSTTOKEN")
+
     def test_tokenが無いとき認証の設定を付けない(self, tmp_path):
         lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
         _, envs, fake = self._fake_subprocess_run("data/defaults.yaml")

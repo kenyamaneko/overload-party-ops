@@ -397,6 +397,12 @@ class Testリポジトリのclone:
         )
         assert env["GIT_CONFIG_VALUE_0"] == "https://github.com/"
 
+    def test_呼び出し元の環境が既にgit設定を持つときSystemExitで中断する(self, monkeypatch):
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+        with patch("check.run", return_value=_proc(0)):
+            with pytest.raises(SystemExit, match="GIT_CONFIG_COUNT is already set"):
+                clone_repo("repo-x", "TSTTOKEN")
+
     def test_失敗詳細がリポ名付きでstderrに出る(self, capsys):
         # リポ名を含めないと、どのリポで何が失敗したか Actions ログから追えなくなる。
         with patch("check.run", return_value=_proc(1, stderr="auth failed")):

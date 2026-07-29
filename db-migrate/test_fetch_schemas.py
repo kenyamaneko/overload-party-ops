@@ -108,6 +108,11 @@ class Test単一ファイルのsparse_clone:
         )
         assert envs[0]["GIT_CONFIG_VALUE_0"] == "https://github.com/"
 
+    def test_呼び出し元の環境が既にgit設定を持つときSystemExitで中断する(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+        with pytest.raises(SystemExit, match="GIT_CONFIG_COUNT is already set"):
+            self._record_git_calls(tmp_path, "TSTTOKEN")
+
     def test_tokenが無いとき認証の設定を付けない(self, tmp_path):
         commands, envs = self._record_git_calls(tmp_path, None)
 

@@ -50,7 +50,16 @@ def github_auth_env(token: str) -> dict[str, str]:
 
     Returns:
         git の実行に渡す環境変数。
+
+    Raises:
+        SystemExit: 呼び出し元の環境が既に GIT_CONFIG_COUNT を設定している場合。
     """
+    if "GIT_CONFIG_COUNT" in os.environ:
+        raise SystemExit(
+            "ERROR: GIT_CONFIG_COUNT is already set in the environment. "
+            "Overwriting it would silently drop the inherited git config entries."
+        )
+
     # subprocess の例外はコマンド引数をそのままメッセージに含めるため、
     # 認証情報を URL ではなく環境変数経由の git 設定として渡す
     return os.environ | {
