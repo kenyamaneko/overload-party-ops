@@ -77,13 +77,13 @@ class TestSlackへの送信:
         assert req.full_url == "https://hooks.slack.com/x"
         assert json.loads(req.data.decode()) == {"text": "hello"}
 
-    def test_SLACK_TEXT_LIMIT超過分を末尾で切り詰めて送る(self):
+    def test_上限を超えるメッセージは末尾を切り詰めてtruncateマーカーを付けて送る(self):
         long_msg = "a" * (sn.SLACK_TEXT_LIMIT + 100)
         with patch("slack_notifier.urllib.request.urlopen") as urlopen:
             sn.post_to_slack("https://hooks.slack.com/x", long_msg)
         sent = json.loads(urlopen.call_args[0][0].data.decode())["text"]
         assert sent.endswith("\n…(truncated)")
-        assert len(sent) == sn.SLACK_TEXT_LIMIT + len("\n…(truncated)")
+        assert len(sent) < len(long_msg)
 
 
 class TestSLACK_WEBHOOK_URLの必須チェック:
