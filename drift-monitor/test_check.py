@@ -380,6 +380,23 @@ class Testリポジトリのclone:
         with patch("check.run", return_value=_proc(1, stderr="auth failed")):
             assert clone_repo("repo-x", "token") is None
 
+    def test_取得元URLにtokenを含めない(self):
+        with patch("check.run", return_value=_proc(0)) as fake_run:
+            clone_repo("repo-x", "TSTTOKEN")
+        args = fake_run.call_args.args[0]
+        assert not any("TSTTOKEN" in arg for arg in args)
+        assert "https://github.com/kenyamaneko/repo-x.git" in args
+
+    def test_gitの設定として環境変数でtokenを渡す(self):
+        with patch("check.run", return_value=_proc(0)) as fake_run:
+            clone_repo("repo-x", "TSTTOKEN")
+        env = fake_run.call_args.kwargs["env"]
+        assert env["GIT_CONFIG_COUNT"] == "1"
+        assert env["GIT_CONFIG_KEY_0"] == (
+            "url.https://x-access-token:TSTTOKEN@github.com/.insteadOf"
+        )
+        assert env["GIT_CONFIG_VALUE_0"] == "https://github.com/"
+
     def test_失敗詳細がリポ名付きでstderrに出る(self, capsys):
         # リポ名を含めないと、どのリポで何が失敗したか Actions ログから追えなくなる。
         with patch("check.run", return_value=_proc(1, stderr="auth failed")):
