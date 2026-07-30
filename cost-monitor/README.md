@@ -7,12 +7,10 @@ dev/stg 環境でコストが発生しているリソースを検出し、Slack 
 | リソース | 検出条件 | 参考コスト |
 |---|---|---|
 | Cloud SQL | state が `RUNNABLE` | $0.19/hr |
-| GKE node pool (`keyandnotes-main-{env}`) | instance group の `targetSize` > 0 | ノードタイプ依存 |
-| Ingress (`overload-party`) | LB IP が割り当て済み | ~$0.025/hr |
 | 予約済み外部 IP | status=RESERVED, addressType=EXTERNAL | ~$3.65/mo |
 | PSC forwarding rule | target が serviceAttachments | - |
 
-node pool は共有クラスタ `keyandnotes-main` (`keyandnotes-platform` プロジェクト) の env 別 node pool を見る。env-lifecycle.yaml の shutdown は node pool resize 方式で行うため、Deployment.spec.replicas ではなく実コストドライバである instance group の `targetSize` で稼働判定する。Ingress は namespace に依存するため namespace が存在しない環境ではスキップされる。
+Cloud Run は使わないあいだインスタンス数が 0 になり課金されないため、検出対象に含めない。
 
 手動実行（`workflow_dispatch`）も可能。
 
