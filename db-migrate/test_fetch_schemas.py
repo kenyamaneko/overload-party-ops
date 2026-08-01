@@ -89,7 +89,7 @@ class Test単一ファイルのsparse_clone:
             writes_file(cmd, cwd=cwd)
 
         with patch("fetch_schemas._run", side_effect=fake_run):
-            fetch_schemas._clone_sparse("o/r", "main", "db/schema.sql", tmp_path, token)
+            fetch_schemas._clone_sparse("o/r", "main", ["db/schema.sql"], tmp_path, token)
         return commands, envs
 
     def test_tokenがあるとき取得元URLにtokenを含めない(self, tmp_path):
@@ -123,19 +123,32 @@ class Test単一ファイルのsparse_clone:
     def test_git操作が失敗したときlockエントリ情報付きのSystemExitで中断する(self, tmp_path):
         with patch("fetch_schemas._run", side_effect=subprocess.CalledProcessError(1, ["git"])):
             with pytest.raises(SystemExit) as exc:
-                fetch_schemas._clone_sparse("o/r", "main", "db/schema.sql", tmp_path, None)
+                fetch_schemas._clone_sparse("o/r", "main", ["db/schema.sql"], tmp_path, None)
         assert "git operation failed" in str(exc.value)
         assert "o/r@main" in str(exc.value)
 
     def test_clone後に期待ファイルが無いときstale_lockとしてSystemExitで中断する(self, tmp_path):
         with patch("fetch_schemas._run"):
             with pytest.raises(SystemExit, match="stale"):
-                fetch_schemas._clone_sparse("o/r", "main", "db/schema.sql", tmp_path, None)
+                fetch_schemas._clone_sparse("o/r", "main", ["db/schema.sql"], tmp_path, None)
 
     def test_cloneが成功したとき取得したファイルのパスを返す(self, tmp_path):
         with patch("fetch_schemas._run", side_effect=self._fake_checkout_writes_file("db/schema.sql")):
-            result = fetch_schemas._clone_sparse("o/r", "main", "db/schema.sql", tmp_path, None)
-        assert result == tmp_path / "db" / "schema.sql"
+            result = fetch_schemas._clone_sparse("o/r", "main", ["db/schema.sql"], tmp_path, None)
+        assert result == [tmp_path / "db" / "schema.sql"]
+
+    def test_複数ファイルを求めたとき要求した順にパスを返す(self, tmp_path):
+        def fake_run(cmd, cwd=None, env=None):
+            if cmd[:2] == ["git", "checkout"]:
+                for file_path in ("db/schema.sql", "db/seed/a.sql"):
+                    target = Path(cwd) / file_path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text("SQL")
+
+        with patch("fetch_schemas._run", side_effect=fake_run):
+            result = fetch_schemas._clone_sparse(
+                "o/r", "main", ["db/schema.sql", "db/seed/a.sql"], tmp_path, None)
+        assert result == [tmp_path / "db" / "schema.sql", tmp_path / "db" / "seed" / "a.sql"]
 
 
 class TestユニオンSQLの結合:
@@ -143,40 +156,44 @@ class TestユニオンSQLの結合:
     包含・順序) を検証する。
     """
 
-    def _fake_clone_sparse(self, ddl_by_name: dict[str, str]):
-        """スキーマ名ごとの DDL 文字列を返す _clone_sparse の fake を作る。
+    def _fake_clone_sparse(self, sql_by_name: dict[str, str]):
+        """スキーマ名ごとの SQL 文字列を返す _clone_sparse の fake を作る。
 
         Args:
-            ddl_by_name: スキーマ名 -> DDL 文字列の辞書。
+            sql_by_name: スキーマ名 -> 取得したファイルに書き込む SQL 文字列の辞書。
 
         Returns:
             _clone_sparse と同じシグネチャの callable。呼び出し引数を calls 属性に記録する。
         """
         calls = []
 
-        def fake(repo, ref, file_path, dest, token):
-            calls.append({"repo": repo, "ref": ref, "file_path": file_path, "token": token})
-            target = dest / file_path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(ddl_by_name[dest.name])
-            return target
+        def fake(repo, ref, file_paths, dest, token):
+            calls.append({"repo": repo, "ref": ref, "file_paths": file_paths, "token": token})
+            targets = []
+            for file_path in file_paths:
+                target = dest / file_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(sql_by_name[dest.name])
+                targets.append(target)
+            return targets
 
         fake.calls = calls
         return fake
 
     def test_schemasキーが無いときSystemExitで中断する(self, tmp_path):
         with pytest.raises(SystemExit, match=r"must contain a `schemas:` list"):
-            fetch_schemas.build_union({"x": []}, tmp_path, None, None)
+            fetch_schemas.fetch_sources({"x": []}, tmp_path, None, None, with_seeds=False)
 
     def test_schemasがリストでないときSystemExitで中断する(self, tmp_path):
         with pytest.raises(SystemExit, match=r"must contain a `schemas:` list"):
-            fetch_schemas.build_union({"schemas": {}}, tmp_path, None, None)
+            fetch_schemas.fetch_sources({"schemas": {}}, tmp_path, None, None, with_seeds=False)
 
     def test_エントリが1件のときバナーとそのDDLがunionに載る(self, tmp_path):
         lock = {"schemas": [{"name": "shop", "repo": "o/r", "path": "db.sql"}]}
         fake = self._fake_clone_sparse({"shop": "CREATE TABLE t1 (id INT);"})
         with patch("fetch_schemas._clone_sparse", side_effect=fake):
-            union = fetch_schemas.build_union(lock, tmp_path, None, None)
+            sources = fetch_schemas.fetch_sources(lock, tmp_path, None, None, with_seeds=False)
+        union = fetch_schemas.render_union(sources)
         assert "-- [shop]  source: o/r@main  path: db.sql" in union
         assert "CREATE TABLE t1 (id INT);" in union
 
@@ -190,7 +207,8 @@ class TestユニオンSQLの結合:
             "card": "CREATE TABLE card_t (id INT);",
         })
         with patch("fetch_schemas._clone_sparse", side_effect=fake):
-            union = fetch_schemas.build_union(lock, tmp_path, None, None)
+            sources = fetch_schemas.fetch_sources(lock, tmp_path, None, None, with_seeds=False)
+        union = fetch_schemas.render_union(sources)
         assert union.index("[shop]") < union.index("[card]")
         assert "CREATE TABLE shop_t (id INT);" in union
         assert "CREATE TABLE card_t (id INT);" in union
@@ -199,15 +217,16 @@ class TestユニオンSQLの結合:
         lock = {"schemas": [{"name": "shop", "repo": "o/r", "path": "db.sql"}]}
         fake = self._fake_clone_sparse({"shop": "CREATE TABLE t1 (id INT);"})
         with patch("fetch_schemas._clone_sparse", side_effect=fake):
-            union = fetch_schemas.build_union(lock, tmp_path, None, None)
-        assert "@main" in union
+            sources = fetch_schemas.fetch_sources(lock, tmp_path, None, None, with_seeds=False)
+        assert "@main" in fetch_schemas.render_union(sources)
         assert fake.calls[0]["ref"] == "main"
 
     def test_ref_overrideを指定したとき全エントリのrefが上書きされる(self, tmp_path):
         lock = {"schemas": [{"name": "shop", "repo": "o/r", "path": "db.sql", "ref": "v1.0.0"}]}
         fake = self._fake_clone_sparse({"shop": "CREATE TABLE t1 (id INT);"})
         with patch("fetch_schemas._clone_sparse", side_effect=fake):
-            union = fetch_schemas.build_union(lock, tmp_path, None, "TST-REF")
+            sources = fetch_schemas.fetch_sources(lock, tmp_path, None, "TST-REF", with_seeds=False)
+        union = fetch_schemas.render_union(sources)
         assert "@TST-REF" in union
         assert "@v1.0.0" not in union
 
@@ -215,7 +234,7 @@ class TestユニオンSQLの結合:
         lock = {"schemas": [{"name": "../x", "repo": "o/r", "path": "db.sql"}]}
         with patch("fetch_schemas._clone_sparse") as clone:
             with pytest.raises(SystemExit):
-                fetch_schemas.build_union(lock, tmp_path, None, None)
+                fetch_schemas.fetch_sources(lock, tmp_path, None, None, with_seeds=False)
         clone.assert_not_called()
 
 
@@ -282,9 +301,9 @@ class Testスキーマ取得mainの入口:
         monkeypatch.setattr("sys.argv", argv)
 
         with patch.dict(os.environ, env_vars, clear=True), \
-             patch("fetch_schemas.build_union", return_value="union sql") as build_union:
+             patch("fetch_schemas.fetch_sources", return_value=[]) as fetch_sources:
             fetch_schemas.main()
-        assert build_union.call_args.args[2] == expected_token
+        assert fetch_sources.call_args.args[2] == expected_token
 
     def test_grant_iam_sqlが無いときSystemExitで中断する(self, tmp_path, monkeypatch):
         lock_path = self._write_lock(tmp_path)
@@ -295,7 +314,7 @@ class Testスキーマ取得mainの入口:
         monkeypatch.setattr("sys.argv", argv)
 
         with patch.dict(os.environ, {}, clear=True), \
-             patch("fetch_schemas.build_union", return_value="union sql"):
+             patch("fetch_schemas.render_union", return_value="union sql"):
             with pytest.raises(SystemExit, match="grant_iam.sql not found"):
                 fetch_schemas.main()
 
@@ -309,8 +328,150 @@ class Testスキーマ取得mainの入口:
         monkeypatch.setattr("sys.argv", argv)
 
         with patch.dict(os.environ, {}, clear=True), \
-             patch("fetch_schemas.build_union", return_value="union sql"):
+             patch("fetch_schemas.render_union", return_value="union sql"):
             fetch_schemas.main()
 
         assert out_path.read_text() == "union sql"
         assert (out_path.parent / "grant_iam.sql").read_text() == grant_src.read_text()
+
+    def test_seedの出力先を指定しないときseed_unionは書かれない(self, tmp_path, monkeypatch):
+        lock_path = self._write_lock(tmp_path)
+        grant_src = tmp_path / "grant_iam.sql"
+        grant_src.write_text("GRANT SELECT ON t TO r;")
+        out_path = tmp_path / "sql" / "schema_union.sql"
+
+        monkeypatch.setattr("sys.argv", self._base_argv(tmp_path, lock_path, out_path, grant_src))
+
+        with patch.dict(os.environ, {}, clear=True):
+            fetch_schemas.main()
+
+        assert not (out_path.parent / "seed_union.sql").exists()
+
+    def test_seedの出力先を指定したときseed_unionも書かれる(self, tmp_path, monkeypatch):
+        lock_path = self._write_lock(tmp_path)
+        grant_src = tmp_path / "grant_iam.sql"
+        grant_src.write_text("GRANT SELECT ON t TO r;")
+        out_path = tmp_path / "sql" / "schema_union.sql"
+        seed_out_path = tmp_path / "sql" / "seed_union.sql"
+
+        argv = self._base_argv(tmp_path, lock_path, out_path, grant_src)
+        argv += ["--seed-out", str(seed_out_path)]
+        monkeypatch.setattr("sys.argv", argv)
+
+        with patch.dict(os.environ, {}, clear=True):
+            fetch_schemas.main()
+
+        assert "seed_union.sql" in seed_out_path.read_text()
+
+
+class Testマスタデータ投入SQLの結合:
+    def _source(self, name: str, schema: str = "CREATE TABLE t ();", seeds=()) -> dict:
+        """fetch_sources が返す形のエントリを組み立てます。
+
+        Args:
+            name: スキーマ名。
+            schema: そのサービスの DDL。
+            seeds: (パス, SQL) の組のリスト。
+
+        Returns:
+            render_union / render_seed_union に渡せる辞書。
+        """
+        return {
+            "name": name,
+            "repo": f"kenyamaneko/overload-party-{name}",
+            "ref": "main",
+            "path": "db/schema.sql",
+            "schema": schema,
+            "seeds": list(seeds),
+        }
+
+    def test_複数サービスのseedがlock記載順に結合される(self):
+        sources = [
+            self._source("card", seeds=[("db/seed/a.sql", "INSERT INTO card.a;"),
+                                        ("db/seed/b.sql", "INSERT INTO card.b;")]),
+            self._source("shop", seeds=[("db/seed/c.sql", "INSERT INTO shop.c;")]),
+        ]
+
+        union = fetch_schemas.render_seed_union(sources)
+
+        assert union.index("INSERT INTO card.a;") < union.index("INSERT INTO card.b;")
+        assert union.index("INSERT INTO card.b;") < union.index("INSERT INTO shop.c;")
+
+    def test_seedを持たないサービスは結合結果に現れない(self):
+        sources = [
+            self._source("account"),
+            self._source("card", seeds=[("db/seed/a.sql", "INSERT INTO card.a;")]),
+        ]
+
+        union = fetch_schemas.render_seed_union(sources)
+
+        assert "INSERT INTO card.a;" in union
+        assert "account" not in union
+
+    def test_seedが1件も無いとき生成物の見出しだけになる(self):
+        union = fetch_schemas.render_seed_union([self._source("account")])
+
+        assert "seed_union.sql" in union
+        assert "INSERT" not in union
+
+    def test_取得元のリポジトリと参照とパスが出力に残る(self):
+        sources = [self._source("card", seeds=[("db/seed/a.sql", "INSERT INTO card.a;")])]
+
+        union = fetch_schemas.render_seed_union(sources)
+
+        assert "kenyamaneko/overload-party-card@main" in union
+        assert "db/seed/a.sql" in union
+
+    def test_DDLの結合にseedのSQLは混ざらない(self):
+        sources = [self._source("card", schema="CREATE TABLE card.card_definitions ();",
+                                seeds=[("db/seed/a.sql", "INSERT INTO card.a;")])]
+
+        union = fetch_schemas.render_union(sources)
+
+        assert "CREATE TABLE card.card_definitions ();" in union
+        assert "INSERT INTO card.a;" not in union
+
+
+class Test取得対象の決定:
+    def _fake_clone_sparse(self, requested: list):
+        """要求されたファイルを記録し、その場に SQL を書く _clone_sparse の fake を作る。
+
+        Args:
+            requested: 要求されたファイルパスを追記するリスト。
+
+        Returns:
+            _clone_sparse と同じシグネチャの callable。
+        """
+        def fake(repo, ref, file_paths, dest, token):
+            requested.extend(file_paths)
+            targets = []
+            for file_path in file_paths:
+                target = dest / file_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(f"SQL {file_path}")
+                targets.append(target)
+            return targets
+
+        return fake
+
+    def test_seedを求めないとき取得するのはDDLだけになる(self, tmp_path):
+        requested = []
+        lock = {"schemas": [{"name": "card", "repo": "o/card", "path": "db/schema.sql",
+                             "ref": "main", "seeds": ["db/seed/a.sql"]}]}
+
+        with patch("fetch_schemas._clone_sparse", side_effect=self._fake_clone_sparse(requested)):
+            sources = fetch_schemas.fetch_sources(lock, tmp_path, None, None, with_seeds=False)
+
+        assert requested == ["db/schema.sql"]
+        assert sources[0]["seeds"] == []
+
+    def test_seedを求めるときDDLと同じ取得でseedも取る(self, tmp_path):
+        requested = []
+        lock = {"schemas": [{"name": "card", "repo": "o/card", "path": "db/schema.sql",
+                             "ref": "main", "seeds": ["db/seed/a.sql"]}]}
+
+        with patch("fetch_schemas._clone_sparse", side_effect=self._fake_clone_sparse(requested)):
+            sources = fetch_schemas.fetch_sources(lock, tmp_path, None, None, with_seeds=True)
+
+        assert requested == ["db/schema.sql", "db/seed/a.sql"]
+        assert sources[0]["seeds"] == [("db/seed/a.sql", "SQL db/seed/a.sql")]

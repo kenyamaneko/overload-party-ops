@@ -25,6 +25,9 @@ matchmaking は DB を持たない (Redis + Pub/Sub のみ)。ゲーム動的設
 2. 取得した DDL を依存順で union し `sql/schema_union.sql` に書き出す (app-level FK 依存の都合で `gateway` は `battle` の後)
 3. psqldef + `sqldef.yml` の `target_schema` で各サービススキーマを宣言的に diff → ALTER 適用
 4. `grant_iam.sql` を psql で実行して IAM user 権限を付与 (per-schema RW)
+5. `seeds` に列挙されたマスタデータ投入 SQL を union し (`sql/seed_union.sql`)、psql で適用
+
+seed は upsert で書かれており、マイグレーションのたびに流すとマスタデータが lock の内容に揃う。カードやプロダクトの定義を各サービスリポで更新すれば、次のマイグレーションで環境に反映される。
 
 psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と union の差分を自動で計算・適用する。union は常に「望ましい全体像」なので、サービスを追加したら `schemas.lock.yaml` にエントリを足し、`sqldef.yml` の `target_schema` にスキーマ名を追加すれば次のマイグレーションで新スキーマが作られる。
 
@@ -34,8 +37,8 @@ psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と unio
 
 | ファイル | 役割 |
 |---------|------|
-| `schemas.lock.yaml` | 各サービスリポの DDL 参照 (repo / path / ref) |
-| `fetch-schemas.py` | lock file から union をビルドする CI 側スクリプト |
+| `schemas.lock.yaml` | 各サービスリポの DDL 参照 (repo / path / ref) と seed の適用順 |
+| `fetch-schemas.py` | lock file から schema / seed の union をビルドする CI 側スクリプト |
 | `grant_iam.sql` | IAM ロール権限付与 (per-schema, idempotent) |
 | `sqldef.yml` | psqldef config (管理対象スキーマをサービス所有スキーマに限定) |
 | `schema_check.py` | 破壊的変更 (DROP TABLE / DROP COLUMN) 検出 |
@@ -45,7 +48,7 @@ psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と unio
 | `update-job-image.sh` | Cloud Run Job のイメージ差し替え |
 | `execute-job.sh` | Cloud Run Job 実行 |
 | `ensure-sql-running.sh` | Cloud SQL インスタンス起動待ち (夜間停止運用との互換) |
-| `sql/` | gitignore。CI 実行時に生成される `schema_union.sql` + copy された `grant_iam.sql` |
+| `sql/` | gitignore。CI 実行時に生成される `schema_union.sql` / `seed_union.sql` + copy された `grant_iam.sql` |
 
 ## スキーマ変更フロー
 
@@ -117,6 +120,7 @@ export DB_MIGRATE_TOKEN=ghp_xxx
 python3 db-migrate/fetch-schemas.py \
   --lock db-migrate/schemas.lock.yaml \
   --out db-migrate/sql/schema_union.sql \
+  --seed-out db-migrate/sql/seed_union.sql \
   --grant-src db-migrate/grant_iam.sql
 
 # ローカル postgres に流す

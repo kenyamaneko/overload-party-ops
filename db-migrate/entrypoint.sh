@@ -5,6 +5,9 @@ set -euo pipefail
 #
 # psqldef 失敗時に grant_iam.sql が半端なスキーマに適用されないよう、
 # 明示的にガードしている（set -e と二重防御）。
+#
+# seed はスキーマと権限が揃った後に適用する。upsert で書かれているため、
+# マイグレーションのたびに流してもマスタデータが lock の内容に揃うだけになる。
 
 echo "==> Applying schema union (psqldef)..."
 if ! psqldef \
@@ -28,6 +31,18 @@ if ! PGPASSWORD="${DATABASE_PASSWORD}" psql \
   -d "${DATABASE_NAME}" \
   -f /app/sql/grant_iam.sql; then
   echo "ERROR: grant_iam.sql application failed." >&2
+  exit 1
+fi
+
+echo "==> Applying master data seeds..."
+if ! PGPASSWORD="${DATABASE_PASSWORD}" psql \
+  -v ON_ERROR_STOP=1 \
+  -h "${DATABASE_HOST}" \
+  -p "${DATABASE_PORT}" \
+  -U "${DATABASE_USER}" \
+  -d "${DATABASE_NAME}" \
+  -f /app/sql/seed_union.sql; then
+  echo "ERROR: seed_union.sql application failed." >&2
   exit 1
 fi
 

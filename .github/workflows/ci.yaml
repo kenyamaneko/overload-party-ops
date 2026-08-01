@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.detect.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect code change
+        id: detect
+        uses: kenyamaneko/overload-party-common/.github/actions/detect-code-change@main
+
+  # ツールごとに pytest.ini を持ち、同名のテストモジュール (test_check.py) が複数の
+  # ディレクトリにあるため、リポジトリ全体をまとめて収集せずツール単位で実行する。
+  test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubicloud-standard-2
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        tool:
+          - cost-monitor
+          - cross-repo-seeds
+          - db-migrate
+          - drift-monitor
+          - firestore-seed
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python dependencies
+        run: pip install pyyaml pytest google-cloud-firestore
+      - name: Run tests
+        run: python3 -m pytest ${{ matrix.tool }}/ -v --junitxml=pytest.xml
+      - name: Report test results
+        if: ${{ !cancelled() }}
+        uses: kenyamaneko/overload-party-common/.github/actions/python-test-report@main
+        with:
+          xml-path: pytest.xml
+          title: ${{ matrix.tool }} テスト結果
