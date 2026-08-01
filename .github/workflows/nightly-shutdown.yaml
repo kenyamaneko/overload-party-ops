@@ -1,11 +1,8 @@
 name: Nightly Shutdown Dispatcher
 
-# ADR「ノードプールスケーリング戦略とGKEの所有権」の所有権原則に基づき、
-# 実処理は各リソースの所有リポに集約。このワークフローはスケジューラとして
-# それらを workflow_dispatch で呼び出すだけにとどめる。
-# - GKE / Ingress / DNS / PSC : overload-party-k8s/env-lifecycle.yaml (action=down)
-# - Cloud SQL                 : overload-party-infra/cloudsql-activation.yaml (action=down)
-# - Node pool resize          : env-lifecycle が platform リポに連鎖 dispatch する
+# 実処理はリソースの所有リポに集約し、このワークフローはスケジューラとして
+# workflow_dispatch で呼び出すだけにとどめる。
+# - Cloud SQL : overload-party-infra/cloudsql-activation.yaml (action=down)
 
 on:
   schedule:
@@ -46,20 +43,7 @@ jobs:
           private-key: ${{ secrets.OPS_AUTOMATION_APP_PRIVATE_KEY }}
           owner: kenyamaneko
 
-      # env-lifecycle の down が GKE / Ingress / DNS / PSC のクリーンアップと
-      # platform への node-pool-scale down dispatch までをまとめて担う。
-      - name: Dispatch env-lifecycle down
-        uses: benc-uk/workflow-dispatch@v1
-        with:
-          workflow: env-lifecycle.yaml
-          repo: kenyamaneko/overload-party-k8s
-          ref: main
-          token: ${{ steps.app-token.outputs.token }}
-          inputs: '{"action": "down", "environment": "${{ matrix.env }}", "slack_notification": "true"}'
-          wait-for-completion: true
-          wait-timeout-seconds: 1200
-
-      # Cloud SQL は infra 所有。env-lifecycle 完了後に停止する。
+      # Cloud SQL は infra 所有。
       - name: Dispatch Cloud SQL down
         uses: benc-uk/workflow-dispatch@v1
         with:

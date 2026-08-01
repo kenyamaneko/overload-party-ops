@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from resources import check_environment, setup_gke_credentials
+from resources import check_environment
 
 ENVIRONMENTS_YAML = Path(__file__).parent / "environments.yaml"
 
@@ -77,16 +77,12 @@ def main() -> None:
         print("No environments loaded")
         sys.exit(1)
 
-    is_gke_available, gke_auth_err = setup_gke_credentials()
     all_costs: dict[str, list[str]] = {}
     all_errors: dict[str, list[str]] = {}
-    # GKE 認証失敗は全環境共通のエラーとして Slack に必ず載せる
-    if gke_auth_err:
-        all_errors["(shared)"] = [gke_auth_err]
 
     for env, project in environments.items():
         print(f"=== Checking {env} ({project}) ===")
-        costs, errors = check_environment(env, project, is_gke_available=is_gke_available)
+        costs, errors = check_environment(project)
         if costs:
             all_costs[env] = costs
         if errors:
