@@ -87,12 +87,32 @@ def _is_absent(result: CommandResult) -> bool:
     return any(marker in output for marker in ABSENT_IMAGE_MARKERS)
 
 
+def _extract_union(run: Runner, ref: str, out_path: str) -> None:
+    """記録イメージから union を取り出し、取り出しに使ったコンテナを片付けます。
+
+    Raises:
+        ImageCommandError: コンテナの作成・取り出しに失敗した場合、または取り出しに
+            成功した後の片付けに失敗した場合。取り出しと片付けの両方が失敗したときは
+            取り出しの失敗を伝える。
+    """
+    container = _run_checked(run, ["docker", "create", ref, EXTRACT_PLACEHOLDER_COMMAND])
+    remove = ["docker", "rm", "--force", container]
+    try:
+        _run_checked(run, ["docker", "cp", f"{container}:{UNION_PATH_IN_IMAGE}", out_path])
+    except ImageCommandError:
+        # 取り出せなかった原因を片付けの失敗で覆い隠さないため、片付けの失敗はログに残す
+        removal = run(remove)
+        if removal.returncode != 0:
+            print(f"WARN: {_describe(remove, removal)}", file=sys.stderr)
+        raise
+    _run_checked(run, remove)
+
+
 def fetch_applied_union(
     image_base: str,
     environment: str,
     out_path: str,
     *,
-    bootstrap_baseline: bool = False,
     run: Runner = run_command,
 ) -> bool:
     """環境に適用済みの union を取り出します。
@@ -100,15 +120,13 @@ def fetch_applied_union(
     Args:
         out_path: 取り出した union の書き出し先。まだ記録が無いときは、前回の残りを
             比較元と取り違えないよう既存のファイルを消したうえで作成しない。
-        bootstrap_baseline: この実行がその環境への初回適用として申告されているか。
-            申告があるときは、記録の有無を判別できない失敗も記録なしとして扱う。
 
     Returns:
         記録があり取り出せたとき True、記録が無いとき False。
 
     Raises:
-        ImageCommandError: 初回適用の申告が無いまま記録の有無を判別できずに取得へ
-            失敗した場合、または取り出しに失敗した場合。
+        ImageCommandError: レジストリが記録なしと答えたのではない理由で取得に失敗した
+            場合、または取り出しに失敗した場合。
     """
     Path(out_path).unlink(missing_ok=True)
     ref = applied_image_ref(image_base, environment)
@@ -118,17 +136,9 @@ def fetch_applied_union(
     if result.returncode != 0:
         if _is_absent(result):
             return False
-        # レジストリの答えを判別できないまま中断すると、記録がまだ無い環境では
-        # 初回適用そのものが実行できなくなる
-        if bootstrap_baseline:
-            print(f"==> treating {environment} as not recorded (declared as the first apply): "
-                  f"{_describe(pull, result)}")
-            return False
         raise ImageCommandError(_describe(pull, result))
 
-    container = _run_checked(run, ["docker", "create", ref, EXTRACT_PLACEHOLDER_COMMAND])
-    _run_checked(run, ["docker", "cp", f"{container}:{UNION_PATH_IN_IMAGE}", out_path])
-    _run_checked(run, ["docker", "rm", "--force", container])
+    _extract_union(run, ref, out_path)
     return True
 
 
@@ -155,12 +165,7 @@ def record_applied_union(
 
 def _run_fetch(args: argparse.Namespace) -> None:
     """取り出しの副コマンドを実行します。"""
-    found = fetch_applied_union(
-        args.image_base,
-        args.environment,
-        args.out,
-        bootstrap_baseline=args.bootstrap_baseline,
-    )
+    found = fetch_applied_union(args.image_base, args.environment, args.out)
     if found:
         print(f"==> fetched the schema union applied to {args.environment}")
     else:
@@ -182,11 +187,6 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--image-base", required=True)
     fetch.add_argument("--environment", required=True)
     fetch.add_argument("--out", required=True)
-    fetch.add_argument(
-        "--bootstrap-baseline",
-        action="store_true",
-        help="その環境への初回適用として、記録の有無を判別できない失敗も記録なしとして扱う",
-    )
     fetch.set_defaults(handler=_run_fetch)
 
     record = subcommands.add_parser("record", help="適用した union を環境の記録として保存する")

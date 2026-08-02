@@ -673,6 +673,33 @@ class Test比較元が未記録のときの扱い:
         assert exc.value.code == 0
         assert "NOT PERFORMED" in capsys.readouterr().out
 
+    def test_比較元が無く初回と申告したとき解析できないDDLがあればexit3で止め解析できた件数を出力する(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        missing = str(tmp_path / "not-recorded.sql")
+        new = _write_union(
+            tmp_path,
+            "new.sql",
+            ("battle", "CREATE TABLE battle.games (id SERIAL PRIMARY KEY);\n"
+                       "CREATE TABLE battle.games_2026 PARTITION OF battle.games FOR VALUES FROM (1) TO (2);"),
+        )
+        monkeypatch.setattr("sys.argv", ["schema_check", "--bootstrap-baseline", missing, new])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 3
+        assert "2 CREATE TABLE statement(s) present but only 1" in capsys.readouterr().out
+
+    def test_比較元が無く初回と申告したとき適用するunionにテーブルが1つも無ければexit3で止め比較できなくなる旨を出力する(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        missing = str(tmp_path / "not-recorded.sql")
+        new = _write_schema(tmp_path, "new.sql", "")
+        monkeypatch.setattr("sys.argv", ["schema_check", "--bootstrap-baseline", missing, new])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 3
+        assert "the schema union to apply holds no table" in capsys.readouterr().out
+
     def test_比較元があるのに初回と申告したときexit2で止め記録済みである旨を出力する(self, monkeypatch, tmp_path, capsys):
         old = _write_union(
             tmp_path, "old.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY, email TEXT);")

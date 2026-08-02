@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
 # 対象環境に適用済みの union を比較元として取り出し、これから適用する union と比較して
-# 破壊的変更を検出する。取り出しと比較で初回適用の申告が食い違わないよう 1 つにまとめる。
+# 破壊的変更を検出する。
 #
 # BOOTSTRAP_BASELINE=true は、その環境にまだ適用済み union が記録されていないことを
-# 承知の上で、比較せずに初回適用することを許可する。
+# 承知の上で、比較せずに初回適用することを許可する。取り出しの結果は申告で変わらず、
+# 記録の有無を判別できない失敗はどちらの実行でも中断する。
 #
 # 必要な環境変数:
 #   BOOTSTRAP_BASELINE - true / false
@@ -25,7 +26,7 @@ case "$BOOTSTRAP_BASELINE" in
     ;;
 esac
 
-db-migrate/fetch-applied-union.sh ${bootstrap_option:+"$bootstrap_option"}
+db-migrate/fetch-applied-union.sh
 
 python3 db-migrate/schema_check.py \
   ${bootstrap_option:+"$bootstrap_option"} \

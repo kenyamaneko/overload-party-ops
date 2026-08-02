@@ -86,7 +86,9 @@ psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と unio
 
 適用済み union がまだ無い環境では、比較対象が無いことを「破壊的変更なし」と扱わずワークフローを失敗させる。初回だけは `bootstrap_baseline=true` を付けた手動実行で、破壊的変更チェックを行わずに適用し、その union を最初の比較元として記録する。適用済み union が既にある環境で `bootstrap_baseline=true` を指定した場合も、チェックを飛ばさないようワークフローを失敗させる。記録されている union にテーブルが 1 つも無い場合は、何を消しても差分が出ないため比較不能として失敗させる。
 
-記録の取得が失敗したとき、それが「まだ記録が無い」のか通信・権限の問題なのかはレジストリの応答から判別する。判別できない失敗は通常の実行では中断するが、`bootstrap_baseline=true` の実行では記録なしとして扱う。判別できないまま中断すると、記録がまだ無い環境では初回適用そのものが実行できなくなるため。
+`bootstrap_baseline=true` が飛ばすのは記録済み union との突き合わせだけで、これから適用する union の解析は初回でも行う。初回に適用した union はそのまま次回以降の比較元になるため、解析できない DDL やテーブルを 1 つも持たない union をそのまま記録すると、以降の実行が比較不能で止まり続ける。
+
+記録の取得が失敗したとき、それが「まだ記録が無い」のか通信・権限の問題なのかはレジストリの応答から判別する。Artifact Registry は未記録のパッケージに 404 (`MANIFEST_UNKNOWN`) を返すので、初回適用でもこの判別は成り立つ。判別できない失敗は `bootstrap_baseline=true` の実行でも中断する。記録済みの環境で取得だけが失敗したときに記録なしとして進むと、破壊的変更チェックが丸ごと飛ぶため。
 
 破壊的変更が検出されるとワークフローは失敗する。意図的な変更の場合は dry_run でプレビューした上で手動実行する。
 
@@ -100,6 +102,31 @@ DDL 中の `CREATE TABLE` の数と解析できたテーブルの数が食い違
 
 - `LIKE 親テーブル` で取り込むカラム。親から継承するカラムは括弧内に現れないので読み取れず、代わりに `like` という実在しないカラムが 1 つ記録される
 - `ALTER TABLE ... ADD COLUMN` で足したカラム。`CREATE TABLE` の外にあるので読み取らない
+
+## 記録した union が使えなくなったときの復旧手順
+
+記録された union が比較元として使えない状態 (テーブルを 1 つも持たない、解析できない) になると、通常の実行は比較不能 (exit 3) で止まり、`bootstrap_baseline=true` は記録済みを理由に (exit 2) 止まる。workflow の入力だけでは抜けられないので、壊れた記録を消してから初回適用としてやり直す。
+
+1. 記録されている union を手元に取り出して内容を確認する (削除すると戻せないため)
+
+```bash
+REGISTRY=asia-northeast1-docker.pkg.dev AR_PROJECT=keyandnotes-platform \
+AR_REPOSITORY=overload-party IMAGE_NAME=db-migrate ENV=dev \
+BASELINE_UNION=/tmp/schema_union.applied.sql \
+db-migrate/fetch-applied-union.sh
+```
+
+2. 壊れた記録を消す (環境ごとにパッケージが分かれているので、対象環境のものだけを消す)
+
+```bash
+gcloud artifacts docker images delete \
+  asia-northeast1-docker.pkg.dev/keyandnotes-platform/overload-party/db-migrate-applied-dev:latest \
+  --delete-tags
+```
+
+3. `gh workflow run db-migrate.yaml -f environment=dev -f bootstrap_baseline=true` を実行し、適用した union を最初の比較元として記録し直す
+
+この手順は記録を消して作り直すだけで、DB には触れない。3 の実行は破壊的変更チェックを行わないので、直前に dry_run で適用内容を確認する。
 
 ## トリガー
 

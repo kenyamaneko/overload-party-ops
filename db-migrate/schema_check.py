@@ -45,6 +45,10 @@ class EmptyBaselineError(Exception):
     """比較元にテーブルが 1 つも無く、削除を検出できないことを表す例外。"""
 
 
+class EmptyCandidateError(Exception):
+    """これから適用する union にテーブルが 1 つも無いことを表す例外。"""
+
+
 def _quoted_region_end(sql: str, start: int) -> int | None:
     """指定位置から始まる引用領域の終端の次の位置を返します。
 
@@ -445,6 +449,27 @@ def check(baseline_path: str, candidate_path: str) -> list[str]:
     return warnings
 
 
+def verify_recordable_union(candidate_path: str) -> dict[str, set[str]]:
+    """これから適用する union が、次回以降の比較元になれることを確かめます。
+
+    Returns:
+        `<所有サービス>.<テーブル名>` をキーとし、カラム名集合を値とするマップ。
+
+    Raises:
+        EmptyCandidateError: テーブルが 1 つも無い場合。
+        SchemaParseError: 解析できない CREATE TABLE、またはカラムを読み取れない
+            CREATE TABLE がある場合。
+        TableAttributionError: テーブルを所有サービスに対応付けられない場合。
+    """
+    candidate_schema = _parse_schema_file(candidate_path)
+    if not candidate_schema:
+        raise EmptyCandidateError(
+            f"{candidate_path}: the schema union to apply holds no table. Recording it "
+            "as the first baseline would leave later runs with nothing to compare."
+        )
+    return candidate_schema
+
+
 def _parse_args() -> argparse.Namespace:
     """コマンドライン引数を解析します。"""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -458,20 +483,17 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _exit_on_baseline_availability(baseline_path: str, bootstrap_baseline: bool) -> None:
-    """比較元の有無と初回適用の申告が食い違うとき、比較へ進まず終了します。"""
-    if not os.path.exists(baseline_path):
-        if not bootstrap_baseline:
-            print("⚠ Schema safety check: no schema union has been recorded as applied yet.")
-            print()
-            print("Nothing can be compared, so destructive changes would go undetected.")
-            print("If this is the first apply for this environment, re-run the manual workflow")
-            print("with bootstrap_baseline=true to apply and record the first baseline.")
-            sys.exit(EXIT_NO_BASELINE)
-        print("Schema safety check: NOT PERFORMED (first apply for this environment)")
-        sys.exit(EXIT_SAFE)
+def _exit_on_baseline_availability(has_baseline: bool, bootstrap_baseline: bool) -> None:
+    """比較元の有無と初回適用の申告が食い違うとき、検査へ進まず終了します。"""
+    if not has_baseline and not bootstrap_baseline:
+        print("⚠ Schema safety check: no schema union has been recorded as applied yet.")
+        print()
+        print("Nothing can be compared, so destructive changes would go undetected.")
+        print("If this is the first apply for this environment, re-run the manual workflow")
+        print("with bootstrap_baseline=true to apply and record the first baseline.")
+        sys.exit(EXIT_NO_BASELINE)
 
-    if bootstrap_baseline:
+    if has_baseline and bootstrap_baseline:
         print("⚠ Schema safety check: a schema union is already recorded for this environment.")
         print()
         print("bootstrap_baseline only covers the first apply. Re-run without it so that")
@@ -482,15 +504,31 @@ def _exit_on_baseline_availability(baseline_path: str, bootstrap_baseline: bool)
 def main() -> None:
     """スキーマ安全性チェックのメインエントリーポイントです。"""
     args = _parse_args()
-    _exit_on_baseline_availability(args.baseline, args.bootstrap_baseline)
+    has_baseline = os.path.exists(args.baseline)
+    _exit_on_baseline_availability(has_baseline, args.bootstrap_baseline)
 
     try:
+        if not has_baseline:
+            # 初回に適用する union はそのまま次回の比較元になるため、比較しない実行でも
+            # 比較元として使える形かどうかは確かめる
+            first_baseline = verify_recordable_union(args.candidate)
+            print("Schema safety check: NOT PERFORMED (first apply for this environment)")
+            print(f"The union to apply holds {len(first_baseline)} table(s) and becomes the "
+                  "baseline for the next run.")
+            sys.exit(EXIT_SAFE)
         warnings = check(args.baseline, args.candidate)
     except EmptyBaselineError as e:
         print(f"⚠ Schema safety check: the recorded schema union is unusable: {e}")
         print()
         print("A recorded union always holds the tables that were applied, so an empty one")
         print("means the record is broken. Investigate it before applying.")
+        print("Recovering from a broken record is described in db-migrate/README.md.")
+        sys.exit(EXIT_UNCHECKABLE)
+    except EmptyCandidateError as e:
+        print(f"⚠ Schema safety check: the schema union to apply is unusable: {e}")
+        print()
+        print("A union built from the service repositories always holds their tables, so an")
+        print("empty one means the build went wrong. Investigate it before applying.")
         sys.exit(EXIT_UNCHECKABLE)
     except SchemaParseError as e:
         print(f"⚠ Schema safety check: cannot parse schema: {e}")

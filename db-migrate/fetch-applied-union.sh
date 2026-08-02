@@ -2,7 +2,6 @@
 #
 # 対象環境に適用済みの schema union を取り出し、破壊的変更チェックの比較元として書き出す。
 # まだ記録が無い環境では、比較元を作らずに正常終了する。
-# 引数はそのまま applied_union.py fetch へ渡す (--bootstrap-baseline の有無)。
 #
 # 必要な環境変数:
 #   REGISTRY / AR_PROJECT / AR_REPOSITORY / IMAGE_NAME - マイグレーションイメージの参照要素
@@ -16,5 +15,4 @@ set -euo pipefail
 python3 db-migrate/applied_union.py fetch \
   --image-base "${REGISTRY}/${AR_PROJECT}/${AR_REPOSITORY}/${IMAGE_NAME}" \
   --environment "${ENV}" \
-  --out "${BASELINE_UNION}" \
-  "$@"
+  --out "${BASELINE_UNION}"

@@ -21,13 +21,16 @@ ABSENT_PULL = CommandResult(
     1, "", 'Error response from daemon: manifest unknown: Failed to fetch "latest"'
 )
 DENIED_PULL = CommandResult(1, "", "Error response from daemon: denied: Permission denied")
+UNREACHABLE_PULL = CommandResult(
+    1, "", "Error response from daemon: failed to do request: dial tcp: connect: connection refused"
+)
 
 
 class FakeDocker:
     """docker コマンドの代わりに、あらかじめ決めた結果を返す実行器。
 
     Args:
-        failures: 失敗させる副コマンド名 (pull / create / cp / build / push) と、その結果。
+        failures: 失敗させる副コマンド名 (pull / create / cp / rm / build / push) と、その結果。
         stored_union: `docker cp` が取り出す union SQL。None のときは何も書き出さない。
     """
 
@@ -40,6 +43,7 @@ class FakeDocker:
         self._failures = failures or {}
         self._stored_union = stored_union
         self.commands: list[list[str]] = []
+        self.containers: set[str] = set()
 
     def __call__(self, command: list[str]) -> CommandResult:
         self.commands.append(command)
@@ -47,7 +51,10 @@ class FakeDocker:
         if subcommand in self._failures:
             return self._failures[subcommand]
         if subcommand == "create":
+            self.containers.add(CONTAINER_ID)
             return CommandResult(0, f"{CONTAINER_ID}\n", "")
+        if subcommand == "rm":
+            self.containers.discard(command[-1])
         if subcommand == "cp" and self._stored_union is not None:
             Path(command[3]).write_text(self._stored_union)
         return CommandResult(0, "", "")
@@ -111,32 +118,45 @@ class Test適用済みunionの取り出し:
         with pytest.raises(ImageCommandError, match="denied"):
             fetch_applied_union(IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), run=docker)
 
-    def test_初回適用と申告したとき記録の有無を判別できない失敗も記録なしとして扱う(self, tmp_path, capsys):
-        docker = FakeDocker(failures={"pull": DENIED_PULL})
+    def test_レジストリに到達できないとき記録なしと扱わずに中断する(self, tmp_path):
+        docker = FakeDocker(failures={"pull": UNREACHABLE_PULL})
 
-        found = fetch_applied_union(
-            IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), bootstrap_baseline=True, run=docker
-        )
-
-        assert found is False
-        assert "declared as the first apply" in capsys.readouterr().out
-
-    def test_初回適用と申告しても記録があれば取り出す(self, tmp_path):
-        docker = FakeDocker(stored_union="CREATE TABLE account.users (id UUID);")
-        out = tmp_path / "baseline.sql"
-
-        found = fetch_applied_union(
-            IMAGE_BASE, "dev", str(out), bootstrap_baseline=True, run=docker
-        )
-
-        assert found is True
-        assert out.read_text() == "CREATE TABLE account.users (id UUID);"
+        with pytest.raises(ImageCommandError, match="connection refused"):
+            fetch_applied_union(IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), run=docker)
 
     def test_取得できても取り出しに失敗したとき中断する(self, tmp_path):
         docker = FakeDocker(failures={"cp": CommandResult(1, "", "no such file or directory")})
 
         with pytest.raises(ImageCommandError, match="docker cp"):
             fetch_applied_union(IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), run=docker)
+
+    def test_取り出しに成功したとき取り出しに使ったコンテナが残らない(self, tmp_path):
+        docker = FakeDocker(stored_union="CREATE TABLE account.users (id UUID);")
+
+        fetch_applied_union(IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), run=docker)
+
+        assert docker.containers == set()
+
+    def test_取り出しに失敗したとき取り出しに使ったコンテナが残らない(self, tmp_path):
+        docker = FakeDocker(failures={"cp": CommandResult(1, "", "no such file or directory")})
+
+        with pytest.raises(ImageCommandError, match="docker cp"):
+            fetch_applied_union(IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), run=docker)
+
+        assert docker.containers == set()
+
+    def test_取り出しにもコンテナの片付けにも失敗したとき取り出しの失敗を報告する(self, tmp_path, capsys):
+        docker = FakeDocker(
+            failures={
+                "cp": CommandResult(1, "", "no such file or directory"),
+                "rm": CommandResult(1, "", "container is already in use"),
+            }
+        )
+
+        with pytest.raises(ImageCommandError, match="docker cp"):
+            fetch_applied_union(IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), run=docker)
+
+        assert "container is already in use" in capsys.readouterr().err
 
 
 class Test適用済みunionの記録:
