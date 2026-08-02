@@ -13,12 +13,15 @@ TABLE_HEADER_RE = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\w+\.)?\w+)\s*\(",
     re.IGNORECASE,
 )
-CREATE_TABLE_KEYWORD_RE = re.compile(r"CREATE\s+TABLE\b", re.IGNORECASE)
+CREATE_TABLE_KEYWORD_RE = re.compile(
+    r"CREATE\s+(?:(?:(?:GLOBAL|LOCAL)\s+)?(?:TEMPORARY|TEMP)\s+|UNLOGGED\s+|FOREIGN\s+)?TABLE\b",
+    re.IGNORECASE,
+)
 DOLLAR_QUOTE_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
 COLUMN_IDENTIFIER_RE = re.compile(r'^(?:"[^"]+"|\w+)$')
-CONSTRAINT_KEYWORDS = {
-    "PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT", "INDEX", "EXCLUDE",
-}
+CONSTRAINT_KEYWORDS = {"PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT"}
+EXCLUDE_CONSTRAINT_KEYWORD = "EXCLUDE"
+EXCLUDE_INDEX_METHOD_KEYWORD = "USING"
 
 EXIT_SAFE = 0
 EXIT_DESTRUCTIVE = 1
@@ -203,13 +206,14 @@ def _find_table_definitions(sql: str) -> list[tuple[str, str]]:
 
 
 def _count_create_table_statements(sql: str) -> int:
-    """CREATE TABLE の出現数を数えます。
+    """テーブルを宣言する文の出現数を数えます。
 
     Args:
         sql: コメントを除去済みの SQL。
 
     Returns:
-        引用領域の外に現れる CREATE TABLE の個数。
+        引用領域の外に現れる CREATE TABLE の個数。UNLOGGED・一時・外部テーブルの
+        指定を伴う形も 1 件として数える。
 
     Raises:
         SchemaParseError: 引用が閉じられない場合。
@@ -263,6 +267,26 @@ def _split_top_level(body: str) -> list[str]:
     return items
 
 
+def _is_table_constraint(tokens: list[str]) -> bool:
+    """CREATE TABLE 本体の要素が表制約かどうかを判定します。
+
+    Args:
+        tokens: 要素を空白で区切ったトークン列。
+
+    Returns:
+        表制約なら True、カラム定義の可能性が残るなら False。
+    """
+    head = tokens[0].upper()
+    if head in CONSTRAINT_KEYWORDS:
+        return True
+    if head != EXCLUDE_CONSTRAINT_KEYWORD:
+        return False
+    # EXCLUDE は予約語ではなくカラム名にも使えるため、除外制約の構文どおり索引方式
+    # または除外要素の括弧が続くときだけ制約とみなす
+    following = tokens[1] if len(tokens) > 1 else ""
+    return following.upper() == EXCLUDE_INDEX_METHOD_KEYWORD or following.startswith("(")
+
+
 def _extract_columns(body: str, table_name: str) -> set[str]:
     """CREATE TABLE 本体からカラム名を抽出します。
 
@@ -282,9 +306,9 @@ def _extract_columns(body: str, table_name: str) -> set[str]:
         tokens = item.split()
         if not tokens:
             continue
-        first_token = tokens[0]
-        if first_token.upper() in CONSTRAINT_KEYWORDS:
+        if _is_table_constraint(tokens):
             continue
+        first_token = tokens[0]
         if not COLUMN_IDENTIFIER_RE.match(first_token):
             raise SchemaParseError(
                 f"table {table_name!r} has an element starting with {first_token!r}, "

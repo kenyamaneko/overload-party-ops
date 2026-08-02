@@ -119,6 +119,63 @@ class TestスキーマDDLのパース:
         assert tables["account.users"] == {"id", "name"}
 
 
+class Test表制約とカラム名の区別:
+    @pytest.mark.parametrize(
+        ("element", "expected"),
+        [
+            pytest.param(
+                "index INTEGER",
+                {"id", "index"},
+                id="index INTEGER があるとき、index をカラムとして読み取る",
+            ),
+            pytest.param(
+                "exclude BOOLEAN",
+                {"id", "exclude"},
+                id="exclude BOOLEAN があるとき、exclude をカラムとして読み取る",
+            ),
+            pytest.param(
+                "exclude",
+                {"id", "exclude"},
+                id="型を伴わない exclude があるとき、exclude をカラムとして読み取る",
+            ),
+            pytest.param(
+                "EXCLUDE USING gist (id WITH =)",
+                {"id"},
+                id="索引方式を伴う除外制約があるとき、カラムは id だけになる",
+            ),
+            pytest.param(
+                "EXCLUDE (id WITH =)",
+                {"id"},
+                id="索引方式を省いた除外制約があるとき、カラムは id だけになる",
+            ),
+        ],
+    )
+    def test_カラム定義と表制約を読み分ける(self, element, expected):
+        tables = parse_schema(_union(("battle", f"CREATE TABLE battle.rooms (id INTEGER, {element});")))
+        assert tables["battle.rooms"] == expected
+
+    def test_indexとexcludeという語のカラムを削除するとDROP_COLUMN警告になる(self, tmp_path):
+        old = _write_union(
+            tmp_path,
+            "old.sql",
+            ("battle", "CREATE TABLE battle.rooms (id INTEGER, index INTEGER, exclude BOOLEAN);"),
+        )
+        new = _write_union(tmp_path, "new.sql", ("battle", "CREATE TABLE battle.rooms (id INTEGER);"))
+        assert check(old, new) == [
+            "DROP COLUMN: battle.rooms.exclude",
+            "DROP COLUMN: battle.rooms.index",
+        ]
+
+    def test_除外制約を消してもカラム削除としては警告しない(self, tmp_path):
+        old = _write_union(
+            tmp_path,
+            "old.sql",
+            ("battle", "CREATE TABLE battle.rooms (id INTEGER, EXCLUDE USING gist (id WITH =));"),
+        )
+        new = _write_union(tmp_path, "new.sql", ("battle", "CREATE TABLE battle.rooms (id INTEGER);"))
+        assert check(old, new) == []
+
+
 class Testコメントを含むDDLのパース:
     def test_全てのカラム定義に行末コメントが付いているとき全カラムを抽出する(self):
         tables = parse_schema(_union(("shop", """
@@ -467,6 +524,30 @@ class Test解析できないDDLの検出:
             pytest.param(
                 "CREATE TABLE battle.active_users AS SELECT id FROM battle.games;",
                 id="問い合わせ結果からの定義が解析できないとき、中断する",
+            ),
+            pytest.param(
+                "CREATE UNLOGGED TABLE battle.scratch (id SERIAL PRIMARY KEY);",
+                id="ログを取らないテーブルの定義が解析できないとき、中断する",
+            ),
+            pytest.param(
+                "CREATE TEMP TABLE battle.scratch (id SERIAL PRIMARY KEY);",
+                id="TEMP 指定の一時テーブルの定義が解析できないとき、中断する",
+            ),
+            pytest.param(
+                "CREATE TEMPORARY TABLE battle.scratch (id SERIAL PRIMARY KEY);",
+                id="TEMPORARY 指定の一時テーブルの定義が解析できないとき、中断する",
+            ),
+            pytest.param(
+                "CREATE GLOBAL TEMPORARY TABLE battle.scratch (id SERIAL PRIMARY KEY);",
+                id="GLOBAL 指定の一時テーブルの定義が解析できないとき、中断する",
+            ),
+            pytest.param(
+                "CREATE LOCAL TEMP TABLE battle.scratch (id SERIAL PRIMARY KEY);",
+                id="LOCAL 指定の一時テーブルの定義が解析できないとき、中断する",
+            ),
+            pytest.param(
+                "CREATE FOREIGN TABLE battle.remote_games (id INTEGER) SERVER remote;",
+                id="外部テーブルの定義が解析できないとき、中断する",
             ),
         ],
     )
