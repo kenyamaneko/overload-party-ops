@@ -76,16 +76,17 @@ def run_gcloud_value(*args: str, allow_not_found: bool = False) -> str:
 def check_cloudsql(project: str) -> tuple[list[str], list[str]]:
     """Cloud SQL インスタンスの稼働状態を確認します。"""
     try:
-        described = run_gcloud_value(
+        state_and_tier = run_gcloud_value(
             "sql", "instances", "describe", CLOUDSQL_INSTANCE,
             "--project", project, "--format=value(state,settings.tier)",
             allow_not_found=True,
         )
     except CommandError as e:
         return [], [f"Cloud SQL チェック失敗: {e}"]
-    if not described:
+    if not state_and_tier:
         return [], []
-    state, _, tier = described.partition("\t")
+    # gcloud の value 形式は複数フィールドをタブで区切るため、指定した順に切り出す。
+    state, _, tier = state_and_tier.partition("\t")
     if state != "RUNNABLE":
         return [], []
     if not tier:

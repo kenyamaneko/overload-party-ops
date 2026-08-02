@@ -166,10 +166,22 @@ class TestCloudSQLの稼働チェック:
         ],
     )
     def test_非稼働状態のCloudSQLはコストとして扱われない(self, state):
-        with patch("resources.run_gcloud_value", return_value=state):
+        with patch("resources.run_gcloud_value", return_value=f"{state}\tdb-g1-small"):
             costs, errors = check_cloudsql("proj")
         assert costs == []
         assert errors == []
+
+    def test_稼働状態とマシンタイプをこの順で問い合わせる(self):
+        with patch(
+            "resources.subprocess.run",
+            return_value=_subprocess_result(0, stdout="RUNNABLE\tdb-g1-small"),
+        ) as run:
+            costs, _ = check_cloudsql("proj")
+        assert run.call_args.args[0] == [
+            "gcloud", "sql", "instances", "describe", "overload-party-db",
+            "--project", "proj", "--format=value(state,settings.tier)",
+        ]
+        assert costs == ["Cloud SQL `overload-party-db` が RUNNABLE (db-g1-small)"]
 
 
 class Test予約済み外部IPのチェック:
