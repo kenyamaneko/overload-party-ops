@@ -27,6 +27,11 @@ on:
         required: false
         type: boolean
         default: false
+      bootstrap_baseline:
+        description: "First apply for this environment (skip the destructive-change check and record the baseline)"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: db-migrate-${{ github.event_name == 'repository_dispatch' && 'dev' || inputs.environment }}
@@ -43,6 +48,8 @@ env:
   AR_REPOSITORY: overload-party
   IMAGE_NAME: db-migrate
   PROJECTS: '{"dev":"overload-party-dev","stg":"overload-party-stg"}'
+  BASELINE_UNION: /tmp/schema_union.applied.sql
+  CANDIDATE_UNION: db-migrate/sql/schema_union.sql
 
 jobs:
   migrate:
@@ -54,10 +61,8 @@ jobs:
       ENV: ${{ github.event_name == 'repository_dispatch' && 'dev' || inputs.environment }}
 
     steps:
-      - name: Checkout ops repo (fetch-depth=2 for HEAD~1 safety diff)
+      - name: Checkout ops repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       - name: Resolve parameters
         id: params
@@ -67,6 +72,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           GIT_SHA: ${{ github.sha }}
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_BOOTSTRAP_BASELINE: ${{ inputs.bootstrap_baseline }}
         run: .github/scripts/db-migrate/resolve-params.sh
 
       - name: Set up Python
@@ -91,21 +97,10 @@ jobs:
         run: |
           python3 db-migrate/fetch-schemas.py \
             --lock db-migrate/schemas.lock.yaml \
-            --out db-migrate/sql/schema_union.sql \
+            --out "$CANDIDATE_UNION" \
             --seed-out db-migrate/sql/seed_union.sql \
             --grant-src db-migrate/grant_iam.sql \
             --workdir /tmp/schema-src-new
-
-      - name: Build previous schema union (for safety diff)
-        env:
-          DB_MIGRATE_TOKEN: ${{ steps.cross-repo-deps-token.outputs.token }}
-        run: .github/scripts/db-migrate/build-previous-schema-union.sh
-
-      - name: Schema safety check
-        run: |
-          python3 db-migrate/schema_check.py \
-            /tmp/schema_union.old.sql \
-            db-migrate/sql/schema_union.sql
 
       - name: Authenticate to Google Cloud
         id: auth
@@ -124,6 +119,11 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Schema safety check against the union applied to this environment
+        env:
+          BOOTSTRAP_BASELINE: ${{ steps.params.outputs.bootstrap_baseline }}
+        run: .github/scripts/db-migrate/check-schema-safety.sh
 
       - name: Build and push migration image
         run: db-migrate/build-push.sh
@@ -147,6 +147,10 @@ jobs:
         run: db-migrate/execute-job.sh
         env:
           PROJECT: ${{ steps.params.outputs.project }}
+
+      - name: Record applied schema union
+        if: steps.params.outputs.dry_run != 'true'
+        run: db-migrate/record-applied-union.sh
 
       - name: Dry-run notice
         if: steps.params.outputs.dry_run == 'true'

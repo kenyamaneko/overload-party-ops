@@ -1,25 +1,14 @@
 #!/usr/bin/env python3
 import pytest
-from schema_check import SchemaParseError, TableAttributionError, parse_schema, check, main
-from union_format import render_source_header
-
-
-def _union(*sections: tuple[str, str]) -> str:
-    """サービスごとの DDL を fetch-schemas.py と同じ書式の union SQL に組み立てます。
-
-    Args:
-        sections: (所有サービス名, そのサービスの DDL) の組。
-
-    Returns:
-        サービス区分の見出しを挟んで結合した union SQL。
-    """
-    chunks: list[str] = []
-    for name, ddl in sections:
-        chunks.extend(
-            render_source_header(name, f"kenyamaneko/overload-party-{name}", "main", "db/schema.sql")
-        )
-        chunks.append(ddl)
-    return "\n".join(chunks) + "\n"
+from conftest import build_union
+from schema_check import (
+    EmptyBaselineError,
+    SchemaParseError,
+    TableAttributionError,
+    check,
+    main,
+    parse_schema,
+)
 
 
 def _write_schema(tmp_path, name: str, content: str) -> str:
@@ -49,12 +38,12 @@ def _write_union(tmp_path, name: str, *sections: tuple[str, str]) -> str:
     Returns:
         作成した一時ファイルの絶対パス文字列。
     """
-    return _write_schema(tmp_path, name, _union(*sections))
+    return _write_schema(tmp_path, name, build_union(*sections))
 
 
 class TestスキーマDDLのパース:
     def test_基本的なテーブルのカラムを抽出する(self):
-        tables = parse_schema(_union(("account", """
+        tables = parse_schema(build_union(("account", """
         CREATE TABLE account.users (
             id SERIAL PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
@@ -64,7 +53,7 @@ class TestスキーマDDLのパース:
         assert tables["account.users"] == {"id", "name", "email"}
 
     def test_IF_NOT_EXISTS付きで定義されたテーブルのカラムを抽出する(self):
-        tables = parse_schema(_union(("news", """
+        tables = parse_schema(build_union(("news", """
         CREATE TABLE IF NOT EXISTS news.news_articles (
             id SERIAL PRIMARY KEY,
             title TEXT NOT NULL,
@@ -74,7 +63,7 @@ class TestスキーマDDLのパース:
         assert tables["news.news_articles"] == {"id", "title", "body"}
 
     def test_複数テーブルをそれぞれ抽出する(self):
-        tables = parse_schema(_union(("battle", """
+        tables = parse_schema(build_union(("battle", """
         CREATE TABLE battle.games (
             id SERIAL PRIMARY KEY,
             status VARCHAR(20)
@@ -87,7 +76,7 @@ class TestスキーマDDLのパース:
         assert set(tables) == {"battle.games", "battle.game_npcs"}
 
     def test_制約キーワードはカラムに含めない(self):
-        tables = parse_schema(_union(("shop", """
+        tables = parse_schema(build_union(("shop", """
         CREATE TABLE shop.orders (
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
@@ -98,7 +87,7 @@ class TestスキーマDDLのパース:
         assert tables["shop.orders"] == {"id", "user_id"}
 
     def test_CHECK制約内のカンマでカラムを誤分割しない(self):
-        tables = parse_schema(_union(("account", """
+        tables = parse_schema(build_union(("account", """
         CREATE TABLE account.player_factions (
             id SERIAL PRIMARY KEY,
             faction VARCHAR(20) NOT NULL CHECK (faction IN ('SHE', 'Tenki', 'Sugar', 'Tuners'))
@@ -110,7 +99,7 @@ class TestスキーマDDLのパース:
         assert parse_schema("") == {}
 
     def test_大文字小文字を問わずパースする(self):
-        tables = parse_schema(_union(("account", """
+        tables = parse_schema(build_union(("account", """
         create table account.Users (
             ID serial primary key,
             Name varchar(255)
@@ -151,7 +140,7 @@ class Test表制約とカラム名の区別:
         ],
     )
     def test_カラム定義と表制約を読み分ける(self, element, expected):
-        tables = parse_schema(_union(("battle", f"CREATE TABLE battle.rooms (id INTEGER, {element});")))
+        tables = parse_schema(build_union(("battle", f"CREATE TABLE battle.rooms (id INTEGER, {element});")))
         assert tables["battle.rooms"] == expected
 
     def test_indexとexcludeという語のカラムを削除するとDROP_COLUMN警告になる(self, tmp_path):
@@ -178,7 +167,7 @@ class Test表制約とカラム名の区別:
 
 class Testコメントを含むDDLのパース:
     def test_全てのカラム定義に行末コメントが付いているとき全カラムを抽出する(self):
-        tables = parse_schema(_union(("shop", """
+        tables = parse_schema(build_union(("shop", """
         CREATE TABLE shop.outbox_events (
           event_id          UUID NOT NULL,                        -- payload 内 eventId と一致
           event_type        VARCHAR(100) NOT NULL,                -- 論理イベント種別
@@ -193,7 +182,7 @@ class Testコメントを含むDDLのパース:
         }
 
     def test_行末コメントにカンマと括弧が含まれるとき後続のカラムも抽出する(self):
-        tables = parse_schema(_union(("account", """
+        tables = parse_schema(build_union(("account", """
         CREATE TABLE account.player_factions (
           player_id UUID NOT NULL,  -- 陣営名 (SHE, Tenki, Sugar)
           faction   VARCHAR(20)     -- 所属陣営（NULL: 全陣営共通）
@@ -202,7 +191,7 @@ class Testコメントを含むDDLのパース:
         assert tables["account.player_factions"] == {"player_id", "faction"}
 
     def test_ブロックコメントがカラム定義の間にあるとき前後のカラムを抽出する(self):
-        tables = parse_schema(_union(("card", """
+        tables = parse_schema(build_union(("card", """
         CREATE TABLE card.decks (
           deck_id BIGINT NOT NULL,
           /* 複数行にわたる
@@ -213,7 +202,7 @@ class Testコメントを含むDDLのパース:
         assert tables["card.decks"] == {"deck_id", "name"}
 
     def test_入れ子のブロックコメントがカラム定義の間にあるとき前後のカラムを抽出する(self):
-        tables = parse_schema(_union(("card", """
+        tables = parse_schema(build_union(("card", """
         CREATE TABLE card.decks (
           deck_id BIGINT NOT NULL,
           /* 説明 /* 補足 */ の続き */
@@ -223,7 +212,7 @@ class Testコメントを含むDDLのパース:
         assert tables["card.decks"] == {"deck_id", "name"}
 
     def test_初期値の文字列に含まれるハイフン2個をコメントとして扱わない(self):
-        tables = parse_schema(_union(("news", """
+        tables = parse_schema(build_union(("news", """
         CREATE TABLE news.news_articles (
           slug  TEXT NOT NULL DEFAULT '--',
           title TEXT NOT NULL
@@ -232,14 +221,14 @@ class Testコメントを含むDDLのパース:
         assert tables["news.news_articles"] == {"slug", "title"}
 
     def test_コメントにCREATE_TABLEの語があるときテーブル数の食い違いとしない(self):
-        tables = parse_schema(_union(("support", """
+        tables = parse_schema(build_union(("support", """
         -- 問い合わせの CREATE TABLE は support スキーマに置く
         CREATE TABLE support.inquiries (inquiry_id BIGINT NOT NULL, body TEXT);
         """)))
         assert set(tables) == {"support.inquiries"}
 
     def test_関数本体にCREATE_TABLEがあるときテーブル数の食い違いとしない(self):
-        tables = parse_schema(_union(("battle", """
+        tables = parse_schema(build_union(("battle", """
         CREATE FUNCTION battle.bootstrap() RETURNS void AS $$
         BEGIN
           CREATE TABLE battle.scratch (id INT);
@@ -252,7 +241,7 @@ class Testコメントを含むDDLのパース:
 
 class Test同名テーブルの所有サービスによる区別:
     def test_別のサービスが同名のテーブルを持つときそれぞれ独立したテーブルとして読み取る(self):
-        tables = parse_schema(_union(
+        tables = parse_schema(build_union(
             ("shop", "CREATE TABLE shop.outbox_events (id UUID PRIMARY KEY, payload JSONB);"),
             ("scenario", "CREATE TABLE scenario.outbox_events (id UUID PRIMARY KEY);"),
         ))
@@ -387,13 +376,6 @@ class Test破壊的変更の検出:
         )
         assert check(old, new) == ["DROP COLUMN: support.inquiries.body"]
 
-    def test_旧スキーマが空なら警告しない(self, tmp_path):
-        old = _write_schema(tmp_path, "old.sql", "")
-        new = _write_union(
-            tmp_path, "new.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY, name TEXT);")
-        )
-        assert check(old, new) == []
-
     def test_テーブル追加は警告しない(self, tmp_path):
         old = _write_union(tmp_path, "old.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
         new = _write_union(
@@ -419,7 +401,7 @@ class TestDDL側のschema修飾の畳み込み:
     )
     def test_DDL側の修飾を外し所有サービスで修飾し直したテーブル名をキーにする(self, qualifier):
         tables = parse_schema(
-            _union(("shop", f"CREATE TABLE {qualifier}users (id SERIAL PRIMARY KEY, name TEXT);"))
+            build_union(("shop", f"CREATE TABLE {qualifier}users (id SERIAL PRIMARY KEY, name TEXT);"))
         )
         assert set(tables) == {"shop.users"}
         assert tables["shop.users"] == {"id", "name"}
@@ -438,7 +420,7 @@ class Test識別子の畳み込み:
     )
     def test_引用符付きは大小を保持し引用符なしは小文字へ畳む(self, column_definition, expected):
         # PostgreSQL の識別子規則: 引用符付きは大小を保持、引用符なしは小文字へ畳む。
-        tables = parse_schema(_union(("account", f"CREATE TABLE t ({column_definition});")))
+        tables = parse_schema(build_union(("account", f"CREATE TABLE t ({column_definition});")))
         assert tables["account.t"] == {expected}
 
 
@@ -498,14 +480,14 @@ class Test所有サービスを特定できないテーブルの検出:
             parse_schema("CREATE TABLE users (id SERIAL PRIMARY KEY);")
 
     def test_同じサービスがschema修飾違いで同名のテーブルを定義するとき中断する(self):
-        union = _union(("shop", """
+        union = build_union(("shop", """
         CREATE TABLE shop.products (id UUID PRIMARY KEY);
         CREATE TABLE public.products (id UUID PRIMARY KEY);
         """))
         with pytest.raises(TableAttributionError, match="shop.products' is defined more than once"):
             parse_schema(union)
 
-    def test_旧スキーマの所有サービスが特定できないとき旧スキーマのファイル名を添えて中断する(self, tmp_path):
+    def test_比較元の所有サービスが特定できないとき比較元のファイル名を添えて中断する(self, tmp_path):
         old = _write_schema(tmp_path, "old.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY);")
         new = _write_union(tmp_path, "new.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
         with pytest.raises(TableAttributionError, match=r"old\.sql"):
@@ -552,11 +534,11 @@ class Test解析できないDDLの検出:
         ],
     )
     def test_解析できないCREATE_TABLEが混ざるとき件数の食い違いを理由に中断する(self, unparseable_ddl):
-        union = _union(("battle", "CREATE TABLE battle.games (id SERIAL PRIMARY KEY);\n" + unparseable_ddl))
+        union = build_union(("battle", "CREATE TABLE battle.games (id SERIAL PRIMARY KEY);\n" + unparseable_ddl))
         with pytest.raises(SchemaParseError, match="2 CREATE TABLE statement.*only 1"):
             parse_schema(union)
 
-    def test_旧スキーマが解析できないとき旧スキーマのファイル名を添えて中断する(self, tmp_path):
+    def test_比較元が解析できないとき比較元のファイル名を添えて中断する(self, tmp_path):
         old = _write_union(
             tmp_path, "old.sql", ("battle", "CREATE TABLE t PARTITION OF p FOR VALUES FROM (1) TO (2);")
         )
@@ -564,7 +546,7 @@ class Test解析できないDDLの検出:
         with pytest.raises(SchemaParseError, match=r"old\.sql"):
             check(old, new)
 
-    def test_新スキーマが解析できないとき新スキーマのファイル名を添えて中断する(self, tmp_path):
+    def test_適用するスキーマが解析できないとき適用するスキーマのファイル名を添えて中断する(self, tmp_path):
         old = _write_union(tmp_path, "old.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
         new = _write_union(
             tmp_path, "new.sql", ("battle", "CREATE TABLE t PARTITION OF p FOR VALUES FROM (1) TO (2);")
@@ -575,27 +557,27 @@ class Test解析できないDDLの検出:
 
 class Testカラムを読み取れないDDLの検出:
     def test_カラムを1つも定義していないテーブルがあるとき中断する(self):
-        union = _union(("battle", "CREATE TABLE battle.games ();"))
+        union = build_union(("battle", "CREATE TABLE battle.games ();"))
         with pytest.raises(SchemaParseError, match="'battle.games' yielded no columns"):
             parse_schema(union)
 
     def test_カラム名にも表制約にも分類できない要素があるとき中断する(self):
-        union = _union(("battle", "CREATE TABLE battle.games (game_id UUID, 'status' TEXT);"))
+        union = build_union(("battle", "CREATE TABLE battle.games (game_id UUID, 'status' TEXT);"))
         with pytest.raises(SchemaParseError, match="neither a column name nor a table constraint"):
             parse_schema(union)
 
     def test_カラムリストの括弧が閉じられないとき中断する(self):
-        union = _union(("battle", "CREATE TABLE battle.games (game_id UUID NOT NULL, status TEXT;"))
+        union = build_union(("battle", "CREATE TABLE battle.games (game_id UUID NOT NULL, status TEXT;"))
         with pytest.raises(SchemaParseError, match="unbalanced parentheses"):
             parse_schema(union)
 
     def test_文字列リテラルが閉じられないとき中断する(self):
-        union = _union(("battle", "CREATE TABLE battle.games (status TEXT NOT NULL DEFAULT 'idle);"))
+        union = build_union(("battle", "CREATE TABLE battle.games (status TEXT NOT NULL DEFAULT 'idle);"))
         with pytest.raises(SchemaParseError, match="unterminated ' quoted text"):
             parse_schema(union)
 
     def test_ブロックコメントが閉じられないとき中断する(self):
-        union = _union(("battle", "CREATE TABLE battle.games (game_id UUID); /* 続き"))
+        union = build_union(("battle", "CREATE TABLE battle.games (game_id UUID); /* 続き"))
         with pytest.raises(SchemaParseError, match="unterminated block comment"):
             parse_schema(union)
 
@@ -609,7 +591,7 @@ class TestCLIの終了コード:
             pytest.param(["schema_check", "a", "b", "c"], id="引数3個のとき exit 2"),
         ],
     )
-    def test_引数がold_newの2個でなければexit2にする(self, monkeypatch, argv):
+    def test_引数が比較元と適用するスキーマの2個でなければexit2にする(self, monkeypatch, argv):
         monkeypatch.setattr("sys.argv", argv)
         with pytest.raises(SystemExit) as exc:
             main()
@@ -663,10 +645,85 @@ class TestCLIの終了コード:
         assert "table 'battle.games' yielded no columns" in capsys.readouterr().out
 
     def test_所有サービスを特定できないテーブルがあればexit3で止め該当テーブルを出力する(self, monkeypatch, tmp_path, capsys):
-        old = _write_schema(tmp_path, "old.sql", "")
+        old = _write_union(tmp_path, "old.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
         new = _write_schema(tmp_path, "new.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY);")
         monkeypatch.setattr("sys.argv", ["schema_check", old, new])
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 3
         assert "table 'users' appears before any source header" in capsys.readouterr().out
+
+
+class Test比較元が未記録のときの扱い:
+    def test_比較元が無く初回と申告していないときexit4で止め初回である旨を出力する(self, monkeypatch, tmp_path, capsys):
+        missing = str(tmp_path / "not-recorded.sql")
+        new = _write_union(tmp_path, "new.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
+        monkeypatch.setattr("sys.argv", ["schema_check", missing, new])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 4
+        assert "no schema union has been recorded as applied yet" in capsys.readouterr().out
+
+    def test_比較元が無く初回と申告したときexit0で検査していない旨を出力する(self, monkeypatch, tmp_path, capsys):
+        missing = str(tmp_path / "not-recorded.sql")
+        new = _write_union(tmp_path, "new.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
+        monkeypatch.setattr("sys.argv", ["schema_check", "--bootstrap-baseline", missing, new])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 0
+        assert "NOT PERFORMED" in capsys.readouterr().out
+
+    def test_比較元が無く初回と申告したとき解析できないDDLがあればexit3で止め解析できた件数を出力する(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        missing = str(tmp_path / "not-recorded.sql")
+        new = _write_union(
+            tmp_path,
+            "new.sql",
+            ("battle", "CREATE TABLE battle.games (id SERIAL PRIMARY KEY);\n"
+                       "CREATE TABLE battle.games_2026 PARTITION OF battle.games FOR VALUES FROM (1) TO (2);"),
+        )
+        monkeypatch.setattr("sys.argv", ["schema_check", "--bootstrap-baseline", missing, new])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 3
+        assert "2 CREATE TABLE statement(s) present but only 1" in capsys.readouterr().out
+
+    def test_比較元が無く初回と申告したとき適用するunionにテーブルが1つも無ければexit3で止め比較できなくなる旨を出力する(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        missing = str(tmp_path / "not-recorded.sql")
+        new = _write_schema(tmp_path, "new.sql", "")
+        monkeypatch.setattr("sys.argv", ["schema_check", "--bootstrap-baseline", missing, new])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 3
+        assert "the schema union to apply holds no table" in capsys.readouterr().out
+
+    def test_比較元があるのに初回と申告したときexit2で止め記録済みである旨を出力する(self, monkeypatch, tmp_path, capsys):
+        old = _write_union(
+            tmp_path, "old.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY, email TEXT);")
+        )
+        new = _write_union(tmp_path, "new.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
+        monkeypatch.setattr("sys.argv", ["schema_check", "--bootstrap-baseline", old, new])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 2
+        assert "a schema union is already recorded" in capsys.readouterr().out
+
+
+class Test比較元にテーブルが無いときの扱い:
+    def test_比較元にテーブルが1つも無いとき中断する(self, tmp_path):
+        old = _write_schema(tmp_path, "old.sql", "")
+        new = _write_union(tmp_path, "new.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
+        with pytest.raises(EmptyBaselineError, match="the baseline holds no table"):
+            check(old, new)
+
+    def test_比較元にテーブルが1つも無いときexit3で止め比較できない旨を出力する(self, monkeypatch, tmp_path, capsys):
+        old = _write_schema(tmp_path, "old.sql", "")
+        new = _write_union(tmp_path, "new.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
+        monkeypatch.setattr("sys.argv", ["schema_check", old, new])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 3
+        assert "the baseline holds no table" in capsys.readouterr().out

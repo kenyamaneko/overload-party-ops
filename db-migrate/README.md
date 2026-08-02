@@ -26,6 +26,7 @@ matchmaking は DB を持たない (Redis + Pub/Sub のみ)。ゲーム動的設
 3. psqldef + `sqldef.yml` の `target_schema` で各サービススキーマを宣言的に diff → ALTER 適用
 4. `grant_iam.sql` を psql で実行して IAM user 権限を付与 (per-schema RW)
 5. `seeds` に列挙されたマスタデータ投入 SQL を union し (`sql/seed_union.sql`)、psql で適用
+6. 適用に成功したら、適用した union を対象環境の記録として Artifact Registry に保存する (`applied_union.py`)
 
 seed は upsert で書かれており、マイグレーションのたびに流すとマスタデータが lock の内容に揃う。カードやプロダクトの定義を各サービスリポで更新すれば、次のマイグレーションで環境に反映される。
 
@@ -42,6 +43,10 @@ psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と unio
 | `grant_iam.sql` | IAM ロール権限付与 (per-schema, idempotent) |
 | `sqldef.yml` | psqldef config (管理対象スキーマをサービス所有スキーマに限定) |
 | `schema_check.py` | 破壊的変更 (DROP TABLE / DROP COLUMN) 検出 |
+| `applied_union.py` | 環境ごとの適用済み union の記録・取り出し |
+| `applied-union.Dockerfile` | 適用済み union を保持するイメージ (union だけを含む) |
+| `fetch-applied-union.sh` | 対象環境の適用済み union を比較元として取り出す |
+| `record-applied-union.sh` | 適用した union を対象環境の記録として保存する |
 | `union_format.py` | union のサービス区分見出しの書式 (`fetch-schemas.py` が書き `schema_check.py` が読む) |
 | `entrypoint.sh` | psqldef + psql 実行ラッパー (Cloud Run Job 内で走る) |
 | `Dockerfile` | psqldef を upstream patch + Alpine postgres client で同梱 |
@@ -73,9 +78,19 @@ psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と unio
 
 ## スキーマ安全チェック
 
-`schema_check.py` が「前コミットの lock file で作った union」 vs 「現コミットの lock file で作った union」を比較し、破壊的変更 (DROP TABLE / DROP COLUMN) を検出する。
+`schema_check.py` が「その環境に適用済みの union」 vs 「これから適用する union」を比較し、破壊的変更 (DROP TABLE / DROP COLUMN) を検出する。
 
-破壊的変更が検出されるとワークフローは失敗する。意図的な変更の場合は dry_run でプレビューした上で手動実行する。
+比較元になる適用済み union は、マイグレーションが成功したときに `applied_union.py` が Artifact Registry へ保存する。`schemas.lock.yaml` の ref は通常 `main` を指すので、lock の履歴からは適用済みのスキーマを再現できない。サービスリポの schema だけが変わる repository_dispatch でも比較が成り立つよう、実際に適用した union そのものを残して比較元にする。保存に失敗した場合はワークフローが失敗する。dry_run では適用しないので記録も更新しない。
+
+保存先は環境ごとに別のイメージ (`db-migrate-applied-<env>`) で、dev と stg はそれぞれ独自の適用済み union を持つ。Artifact Registry のクリーンアップは新しいバージョンから一定数をパッケージ単位で残すため、環境を分けないと実行頻度の低い環境の記録が先に消える。
+
+適用済み union がまだ無い環境では、比較対象が無いことを「破壊的変更なし」と扱わずワークフローを失敗させる。初回だけは `bootstrap_baseline=true` を付けた手動実行で、破壊的変更チェックを行わずに適用し、その union を最初の比較元として記録する。適用済み union が既にある環境で `bootstrap_baseline=true` を指定した場合も、チェックを飛ばさないようワークフローを失敗させる。記録されている union にテーブルが 1 つも無い場合は、何を消しても差分が出ないため比較不能として失敗させる。
+
+`bootstrap_baseline=true` が飛ばすのは記録済み union との突き合わせだけで、これから適用する union の解析は初回でも行う。初回に適用した union はそのまま次回以降の比較元になるため、解析できない DDL やテーブルを 1 つも持たない union をそのまま記録すると、以降の実行が比較不能で止まり続ける。
+
+記録の取得が失敗したとき、それが「まだ記録が無い」のか通信・権限の問題なのかはレジストリの応答から判別する。Artifact Registry は未記録のパッケージに 404 (`MANIFEST_UNKNOWN`) を返すので、初回適用でもこの判別は成り立つ。判別できない失敗は `bootstrap_baseline=true` の実行でも中断する。記録済みの環境で取得だけが失敗したときに記録なしとして進むと、破壊的変更チェックが丸ごと飛ぶため。
+
+破壊的変更が検出されるとワークフローは失敗する。どの実行もこの比較を通るので、意図した削除を適用するときは「記録した union が使えなくなったときの復旧手順」と同じ手順で記録を置き換えてから実行する。
 
 テーブルは所有サービスで修飾した名前 (`shop.outbox_events`) で対応付ける。`outbox_events` / `processed_events` / `products` は複数のサービスが同名で持つため、修飾しないと片方の定義がもう片方を隠し、隠れた側の削除を検出できない。所有サービスは union のサービス区分見出しから決まるので、`schemas.lock.yaml` の `name` を変えると旧名のテーブル削除と新名のテーブル追加として報告される。見出しの無い SQL を渡した場合や、1 つのサービスが同名のテーブルを二重に定義している場合は、対応付けができないためワークフローは失敗する。
 
@@ -87,6 +102,31 @@ DDL 中の `CREATE TABLE` の数と解析できたテーブルの数が食い違
 
 - `LIKE 親テーブル` で取り込むカラム。親から継承するカラムは括弧内に現れないので読み取れず、代わりに `like` という実在しないカラムが 1 つ記録される
 - `ALTER TABLE ... ADD COLUMN` で足したカラム。`CREATE TABLE` の外にあるので読み取らない
+
+## 記録した union が使えなくなったときの復旧手順
+
+記録された union が比較元として使えない状態 (テーブルを 1 つも持たない、解析できない) になると、通常の実行は比較不能 (exit 3) で止まり、`bootstrap_baseline=true` は記録済みを理由に (exit 2) 止まる。workflow の入力だけでは抜けられないので、壊れた記録を消してから初回適用としてやり直す。
+
+1. 記録されている union を手元に取り出して内容を確認する (削除すると戻せないため)
+
+```bash
+REGISTRY=asia-northeast1-docker.pkg.dev AR_PROJECT=keyandnotes-platform \
+AR_REPOSITORY=overload-party IMAGE_NAME=db-migrate ENV=dev \
+BASELINE_UNION=/tmp/schema_union.applied.sql \
+db-migrate/fetch-applied-union.sh
+```
+
+2. 壊れた記録を消す (環境ごとにパッケージが分かれているので、対象環境のものだけを消す)
+
+```bash
+gcloud artifacts docker images delete \
+  asia-northeast1-docker.pkg.dev/keyandnotes-platform/overload-party/db-migrate-applied-dev:latest \
+  --delete-tags
+```
+
+3. `gh workflow run db-migrate.yaml -f environment=dev -f bootstrap_baseline=true` を実行し、適用した union を最初の比較元として記録し直す
+
+1 と 2 は記録を消すだけで DB には触れない。3 は破壊的変更チェックを行わずに適用するので、1 で取り出した union と、これから適用する union の差分を確認してから実行する。
 
 ## トリガー
 
@@ -102,6 +142,7 @@ GitHub Actions UI から手動実行。
 |-----------|------|-----------|
 | `environment` | 対象環境 (`dev` / `stg`) | `dev` |
 | `dry_run` | dry-run モード (イメージ更新のみ、ジョブ実行なし) | `false` |
+| `bootstrap_baseline` | その環境への初回適用 (破壊的変更チェックを行わず、適用した union を最初の比較元として記録する) | `false` |
 
 ## Dry-run モード
 
