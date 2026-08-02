@@ -140,11 +140,17 @@ class TestActions実行URLの組み立て:
 
 
 class TestCloudSQLの稼働チェック:
-    def test_stateがRUNNABLEのときCloudSQLの時間課金がコスト警告に載る(self):
+    def test_stateがRUNNABLEのときマシンタイプがコスト警告に載る(self):
+        with patch("resources.run_gcloud_value", return_value="RUNNABLE\tdb-g1-small"):
+            costs, errors = check_cloudsql("proj")
+        assert costs == ["Cloud SQL `overload-party-db` が RUNNABLE (db-g1-small)"]
+        assert errors == []
+
+    def test_stateがRUNNABLEでマシンタイプを取得できないときエラーとして報告する(self):
         with patch("resources.run_gcloud_value", return_value="RUNNABLE"):
             costs, errors = check_cloudsql("proj")
-        assert costs == ["Cloud SQL `overload-party-db` が RUNNABLE ($0.19/hr)"]
-        assert errors == []
+        assert costs == []
+        assert errors == ["Cloud SQL `overload-party-db` のマシンタイプを取得できませんでした"]
 
     def test_インスタンスが存在しないときコストもエラーも報告しない(self):
         with patch("resources.run_gcloud_value", return_value=""):

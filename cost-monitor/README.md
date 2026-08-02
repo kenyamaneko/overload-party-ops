@@ -4,11 +4,13 @@ dev/stg 環境でコストが発生しているリソースを検出し、Slack 
 
 ## チェック対象
 
-| リソース | 検出条件 | 参考コスト |
+| リソース | 検出条件 | 通知に載せる情報 |
 |---|---|---|
-| Cloud SQL | state が `RUNNABLE` | $0.19/hr |
+| Cloud SQL | state が `RUNNABLE` | マシンタイプ (`db-g1-small` 等) |
 | 予約済み外部 IP | status=RESERVED, addressType=EXTERNAL | ~$3.65/mo |
 | PSC forwarding rule | target が serviceAttachments | - |
+
+Cloud SQL はマシンタイプを変えると単価が変わるため、金額ではなくマシンタイプを載せる。
 
 Cloud Run は使わないあいだインスタンス数が 0 になり課金されないため、検出対象に含めない。
 
