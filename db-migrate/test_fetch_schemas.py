@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from schema_check import parse_schema
 
 _MODULE_PATH = Path(__file__).parent / "fetch-schemas.py"
 _spec = importlib.util.spec_from_file_location("fetch_schemas", _MODULE_PATH)
@@ -212,6 +213,22 @@ class TestユニオンSQLの結合:
         assert union.index("[shop]") < union.index("[card]")
         assert "CREATE TABLE shop_t (id INT);" in union
         assert "CREATE TABLE card_t (id INT);" in union
+
+    def test_同名テーブルを持つ2サービスを結合したunionは破壊的変更チェックに別テーブルとして読まれる(self, tmp_path):
+        lock = {"schemas": [
+            {"name": "shop", "repo": "o/shop", "path": "db.sql", "ref": "main"},
+            {"name": "scenario", "repo": "o/scenario", "path": "db.sql", "ref": "main"},
+        ]}
+        fake = self._fake_clone_sparse({
+            "shop": "CREATE TABLE shop.outbox_events (id UUID PRIMARY KEY, payload JSONB);",
+            "scenario": "CREATE TABLE scenario.outbox_events (id UUID PRIMARY KEY);",
+        })
+        with patch("fetch_schemas._clone_sparse", side_effect=fake):
+            sources = fetch_schemas.fetch_sources(lock, tmp_path, None, None, with_seeds=False)
+        assert parse_schema(fetch_schemas.render_union(sources)) == {
+            "shop.outbox_events": {"id", "payload"},
+            "scenario.outbox_events": {"id"},
+        }
 
     @pytest.mark.parametrize(
         "entry",

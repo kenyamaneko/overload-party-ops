@@ -42,6 +42,7 @@ psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と unio
 | `grant_iam.sql` | IAM ロール権限付与 (per-schema, idempotent) |
 | `sqldef.yml` | psqldef config (管理対象スキーマをサービス所有スキーマに限定) |
 | `schema_check.py` | 破壊的変更 (DROP TABLE / DROP COLUMN) 検出 |
+| `union_format.py` | union のサービス区分見出しの書式 (`fetch-schemas.py` が書き `schema_check.py` が読む) |
 | `entrypoint.sh` | psqldef + psql 実行ラッパー (Cloud Run Job 内で走る) |
 | `Dockerfile` | psqldef を upstream patch + Alpine postgres client で同梱 |
 | `build-push.sh` | イメージビルド & Artifact Registry push |
@@ -75,6 +76,8 @@ psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と unio
 `schema_check.py` が「前コミットの lock file で作った union」 vs 「現コミットの lock file で作った union」を比較し、破壊的変更 (DROP TABLE / DROP COLUMN) を検出する。
 
 破壊的変更が検出されるとワークフローは失敗する。意図的な変更の場合は dry_run でプレビューした上で手動実行する。
+
+テーブルは所有サービスで修飾した名前 (`shop.outbox_events`) で対応付ける。`outbox_events` / `processed_events` / `products` は複数のサービスが同名で持つため、修飾しないと片方の定義がもう片方を隠し、隠れた側の削除を検出できない。所有サービスは union のサービス区分見出しから決まるので、`schemas.lock.yaml` の `name` を変えると旧名のテーブル削除と新名のテーブル追加として報告される。見出しの無い SQL を渡した場合や、1 つのサービスが同名のテーブルを二重に定義している場合は、対応付けができないためワークフローは失敗する。
 
 DDL 中の `CREATE TABLE` の数と解析できたテーブルの数が食い違う場合も、ワークフローは失敗する。解析できなかったテーブルは削除・カラム削除を検出できないため、検査の穴を残したまま適用へ進ませない。新しい DDL 構文を使うときは `schema_check.py` のパーサを併せて拡張する。
 
