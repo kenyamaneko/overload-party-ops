@@ -8,7 +8,7 @@ sparse-checkout でクローンし、lock ファイルに固定された ref の
 fetch を Docker 外で行う理由:
   - Git 認証は workflow (DB_MIGRATE_TOKEN secret) にあり、イメージに含めない
   - sql/ の COPY レイヤーハッシュでキャッシュが効くため PAT を中間レイヤーに含めない
-  - 旧スキーマとの差分チェックもイメージ外の方が容易
+  - 適用済みスキーマとの差分チェックもイメージ外の方が容易
 
 引数:
   --lock PATH          schemas.lock.yaml パス (デフォルト: db-migrate/schemas.lock.yaml)
@@ -238,8 +238,7 @@ def main() -> int:
                         help="Canonical grant_iam.sql path (committed in ops repo). "
                              "Copied alongside the union so Dockerfile COPY sql/ picks up both.")
     parser.add_argument("--seed-out", default=None,
-                        help="Seed union output file. Seeds are fetched only when this is given; "
-                             "the safety-diff build of the previous union omits it.")
+                        help="Seed union output file. Seeds are fetched only when this is given.")
     parser.add_argument("--workdir", default="/tmp/schema-src")
     parser.add_argument("--token", default=None)
     parser.add_argument("--ref-override", default=None)

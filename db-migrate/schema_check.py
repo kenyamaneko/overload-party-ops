@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""新旧の union SQL を比較し、破壊的変更（テーブル削除・カラム削除）を検出する。
+"""環境に適用済みの union SQL と、これから適用する union SQL を比較し、破壊的変更
+（テーブル削除・カラム削除）を検出する。
 
 テーブルは所有サービスで修飾した名前で対応付ける。別サービスが同名のテーブルを
 持つため、修飾しないと片方の定義がもう片方を隠し、その削除を検出できなくなる。
 """
+import argparse
+import os
 import re
 import sys
 
@@ -27,6 +30,7 @@ EXIT_SAFE = 0
 EXIT_DESTRUCTIVE = 1
 EXIT_USAGE = 2
 EXIT_UNCHECKABLE = 3
+EXIT_NO_BASELINE = 4
 
 
 class SchemaParseError(Exception):
@@ -35,6 +39,10 @@ class SchemaParseError(Exception):
 
 class TableAttributionError(Exception):
     """テーブルを所有サービス 1 つに対応付けられなかったことを表す例外。"""
+
+
+class EmptyBaselineError(Exception):
+    """比較元にテーブルが 1 つも無く、削除を検出できないことを表す例外。"""
 
 
 def _quoted_region_end(sql: str, start: int) -> int | None:
@@ -403,41 +411,87 @@ def _parse_schema_file(path: str) -> dict[str, set[str]]:
         raise TableAttributionError(f"{path}: {e}") from e
 
 
-def check(old_path: str, new_path: str) -> list[str]:
-    """新旧スキーマを比較し、破壊的変更の警告リストを返します。
+def check(baseline_path: str, candidate_path: str) -> list[str]:
+    """比較元とこれから適用するスキーマを比較し、破壊的変更の警告リストを返します。
 
     Raises:
+        EmptyBaselineError: 比較元にテーブルが 1 つも無い場合。
         SchemaParseError: いずれかのスキーマに解析できない CREATE TABLE、または
             カラムを読み取れない CREATE TABLE がある場合。
         TableAttributionError: いずれかのスキーマでテーブルを所有サービスに
             対応付けられない場合。
     """
-    old_schema = _parse_schema_file(old_path)
-    new_schema = _parse_schema_file(new_path)
+    baseline_schema = _parse_schema_file(baseline_path)
+    # テーブルを 1 つも持たない比較元は、いくつテーブルを消しても差分が出ないため、
+    # 破壊的変更が無いことの根拠にならない
+    if not baseline_schema:
+        raise EmptyBaselineError(
+            f"{baseline_path}: the baseline holds no table. Every table the new schema "
+            "drops would go unreported."
+        )
+    candidate_schema = _parse_schema_file(candidate_path)
 
     warnings: list[str] = []
 
-    dropped_tables = set(old_schema) - set(new_schema)
+    dropped_tables = set(baseline_schema) - set(candidate_schema)
     for t in sorted(dropped_tables):
         warnings.append(f"DROP TABLE: {t}")
 
-    for table in sorted(set(old_schema) & set(new_schema)):
-        dropped_cols = old_schema[table] - new_schema[table]
+    for table in sorted(set(baseline_schema) & set(candidate_schema)):
+        dropped_cols = baseline_schema[table] - candidate_schema[table]
         for col in sorted(dropped_cols):
             warnings.append(f"DROP COLUMN: {table}.{col}")
 
     return warnings
 
 
-def main() -> None:
-    """スキーマ安全性チェックのメインエントリーポイントです。"""
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <old_schema.sql> <new_schema.sql>")
+def _parse_args() -> argparse.Namespace:
+    """コマンドライン引数を解析します。"""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("baseline", help="環境に適用済みの union。未記録なら存在しなくてよい")
+    parser.add_argument("candidate", help="これから適用する union")
+    parser.add_argument(
+        "--allow-missing-baseline",
+        action="store_true",
+        help="適用済み union が未記録の環境で、比較せずに初回適用することを許可する",
+    )
+    return parser.parse_args()
+
+
+def _exit_on_baseline_availability(baseline_path: str, allow_missing: bool) -> None:
+    """比較元の有無と初回の申告が食い違うとき、比較へ進まず終了します。"""
+    if not os.path.exists(baseline_path):
+        if not allow_missing:
+            print("⚠ Schema safety check: no schema union has been recorded as applied yet.")
+            print()
+            print("Nothing can be compared, so destructive changes would go undetected.")
+            print("If this is the first apply for this environment, re-run the manual workflow")
+            print("with bootstrap_baseline=true to apply and record the first baseline.")
+            sys.exit(EXIT_NO_BASELINE)
+        print("Schema safety check: NOT PERFORMED (first apply for this environment)")
+        sys.exit(EXIT_SAFE)
+
+    if allow_missing:
+        print("⚠ Schema safety check: a schema union is already recorded for this environment.")
+        print()
+        print("bootstrap_baseline only covers the first apply. Re-run without it so that")
+        print("destructive changes are checked against the recorded union.")
         sys.exit(EXIT_USAGE)
 
-    old_path, new_path = sys.argv[1], sys.argv[2]
+
+def main() -> None:
+    """スキーマ安全性チェックのメインエントリーポイントです。"""
+    args = _parse_args()
+    _exit_on_baseline_availability(args.baseline, args.allow_missing_baseline)
+
     try:
-        warnings = check(old_path, new_path)
+        warnings = check(args.baseline, args.candidate)
+    except EmptyBaselineError as e:
+        print(f"⚠ Schema safety check: the recorded schema union is unusable: {e}")
+        print()
+        print("A recorded union always holds the tables that were applied, so an empty one")
+        print("means the record is broken. Investigate it before applying.")
+        sys.exit(EXIT_UNCHECKABLE)
     except SchemaParseError as e:
         print(f"⚠ Schema safety check: cannot parse schema: {e}")
         print()

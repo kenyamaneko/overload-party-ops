@@ -26,6 +26,7 @@ matchmaking は DB を持たない (Redis + Pub/Sub のみ)。ゲーム動的設
 3. psqldef + `sqldef.yml` の `target_schema` で各サービススキーマを宣言的に diff → ALTER 適用
 4. `grant_iam.sql` を psql で実行して IAM user 権限を付与 (per-schema RW)
 5. `seeds` に列挙されたマスタデータ投入 SQL を union し (`sql/seed_union.sql`)、psql で適用
+6. 適用に成功したら、適用した union を対象環境の記録として Artifact Registry に保存する (`applied_union.py`)
 
 seed は upsert で書かれており、マイグレーションのたびに流すとマスタデータが lock の内容に揃う。カードやプロダクトの定義を各サービスリポで更新すれば、次のマイグレーションで環境に反映される。
 
@@ -42,6 +43,10 @@ psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と unio
 | `grant_iam.sql` | IAM ロール権限付与 (per-schema, idempotent) |
 | `sqldef.yml` | psqldef config (管理対象スキーマをサービス所有スキーマに限定) |
 | `schema_check.py` | 破壊的変更 (DROP TABLE / DROP COLUMN) 検出 |
+| `applied_union.py` | 環境ごとの適用済み union の記録・取り出し |
+| `applied-union.Dockerfile` | 適用済み union を保持するイメージ (union だけを含む) |
+| `fetch-applied-union.sh` | 対象環境の適用済み union を比較元として取り出す |
+| `record-applied-union.sh` | 適用した union を対象環境の記録として保存する |
 | `union_format.py` | union のサービス区分見出しの書式 (`fetch-schemas.py` が書き `schema_check.py` が読む) |
 | `entrypoint.sh` | psqldef + psql 実行ラッパー (Cloud Run Job 内で走る) |
 | `Dockerfile` | psqldef を upstream patch + Alpine postgres client で同梱 |
@@ -73,7 +78,13 @@ psqldef は宣言的スキーマ管理ツールで、現在の DB 状態と unio
 
 ## スキーマ安全チェック
 
-`schema_check.py` が「前コミットの lock file で作った union」 vs 「現コミットの lock file で作った union」を比較し、破壊的変更 (DROP TABLE / DROP COLUMN) を検出する。
+`schema_check.py` が「その環境に適用済みの union」 vs 「これから適用する union」を比較し、破壊的変更 (DROP TABLE / DROP COLUMN) を検出する。
+
+比較元になる適用済み union は、マイグレーションが成功したときに `applied_union.py` が Artifact Registry へ保存する。`schemas.lock.yaml` の ref は通常 `main` を指すので、lock の履歴からは適用済みのスキーマを再現できない。サービスリポの schema だけが変わる repository_dispatch でも比較が成り立つよう、実際に適用した union そのものを残して比較元にする。保存に失敗した場合はワークフローが失敗する。dry_run では適用しないので記録も更新しない。
+
+保存先は環境ごとに別のイメージ (`db-migrate-applied-<env>`) で、dev と stg はそれぞれ独自の適用済み union を持つ。Artifact Registry のクリーンアップは新しいバージョンから一定数をパッケージ単位で残すため、環境を分けないと実行頻度の低い環境の記録が先に消える。
+
+適用済み union がまだ無い環境では、比較対象が無いことを「破壊的変更なし」と扱わずワークフローを失敗させる。初回だけは `bootstrap_baseline=true` を付けた手動実行で、破壊的変更チェックを行わずに適用し、その union を最初の比較元として記録する。適用済み union が既にある環境で `bootstrap_baseline=true` を指定した場合も、チェックを飛ばさないようワークフローを失敗させる。記録されている union にテーブルが 1 つも無い場合は、何を消しても差分が出ないため比較不能として失敗させる。
 
 破壊的変更が検出されるとワークフローは失敗する。意図的な変更の場合は dry_run でプレビューした上で手動実行する。
 
@@ -102,6 +113,7 @@ GitHub Actions UI から手動実行。
 |-----------|------|-----------|
 | `environment` | 対象環境 (`dev` / `stg`) | `dev` |
 | `dry_run` | dry-run モード (イメージ更新のみ、ジョブ実行なし) | `false` |
+| `bootstrap_baseline` | その環境への初回適用 (破壊的変更チェックを行わず、適用した union を最初の比較元として記録する) | `false` |
 
 ## Dry-run モード
 
