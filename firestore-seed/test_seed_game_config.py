@@ -109,7 +109,9 @@ class Testlock経由の取得:
 
         return calls, envs, fake
 
-    _LOCK_ENTRY = "sources:\n  game_config:\n    repo: o/r\n    path: data/defaults.yaml\n"
+    _LOCK_ENTRY = (
+        "sources:\n  game_config:\n    repo: o/r\n    path: data/defaults.yaml\n    ref: main\n"
+    )
 
     def test_sourcesキーが無いときSystemExitで中断する(self, tmp_path):
         lock_path = self._write_lock_yaml(tmp_path, "x: {}\n")
@@ -121,13 +123,37 @@ class Testlock経由の取得:
         with pytest.raises(SystemExit, match="sources.game_config"):
             seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", None)
 
-    def test_refが無いときmainを取得する(self, tmp_path):
-        lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)
+    @pytest.mark.parametrize(
+        "lock_text",
+        [
+            pytest.param(
+                "sources:\n  game_config:\n    repo: o/r\n    path: data/defaults.yaml\n",
+                id="ref キーが無いとき、取得せず中断する",
+            ),
+            pytest.param(
+                "sources:\n  game_config:\n    repo: o/r\n    path: data/defaults.yaml\n    ref:\n",
+                id="ref が空のとき、取得せず中断する",
+            ),
+        ],
+    )
+    def test_refがpinされていないときSystemExitで中断する(self, tmp_path, lock_text):
+        lock_path = self._write_lock_yaml(tmp_path, lock_text)
+        with patch("seed_game_config.subprocess.run") as run:
+            with pytest.raises(SystemExit, match="has no `ref`"):
+                seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", None)
+        run.assert_not_called()
+
+    def test_refがpinされているときそのrefを取得する(self, tmp_path):
+        lock_path = self._write_lock_yaml(
+            tmp_path,
+            "sources:\n  game_config:\n    repo: o/r\n"
+            "    path: data/defaults.yaml\n    ref: v1.2.3\n",
+        )
         calls, _, fake = self._fake_subprocess_run("data/defaults.yaml")
         with patch("seed_game_config.subprocess.run", side_effect=fake):
             seed_game_config.fetch_from_lock(lock_path, tmp_path / "work", None)
         fetch_calls = [c for c in calls if c[:2] == ["git", "fetch"]]
-        assert fetch_calls[0][-1] == "main"
+        assert fetch_calls[0][-1] == "v1.2.3"
 
     def test_tokenがあるとき取得元URLにtokenを含めない(self, tmp_path):
         lock_path = self._write_lock_yaml(tmp_path, self._LOCK_ENTRY)

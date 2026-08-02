@@ -151,7 +151,14 @@ def fetch_sources(lock: dict, workdir: Path, token: str | None, ref_override: st
         name = entry["name"]
         repo = entry["repo"]
         path = entry["path"]
-        ref = ref_override or entry.get("ref", "main")
+        # ref の欠落を main で補うと、pin されているように見えて実際は追随する状態になり、
+        # どの DDL を適用したか後から再現できなくなる
+        if not entry.get("ref"):
+            raise SystemExit(
+                f"ERROR: schemas.lock.yaml entry {name!r} (repo={repo!r}) has no `ref`. "
+                "Every entry must pin a ref explicitly."
+            )
+        ref = ref_override or entry["ref"]
         seed_paths = list(entry.get("seeds", [])) if with_seeds else []
 
         # `name` はスクラッチディレクトリ名と union SQL のバナーに使われる。

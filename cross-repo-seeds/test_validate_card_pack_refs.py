@@ -30,16 +30,60 @@ class TestShopのcard_pack_id抽出:
             "pack_x": "limited_x",
         }
 
-    def test_card_pack_idを持たないproductはスキップする(self, tmp_path: Path):
-        # card_pack_id を持たない product (cosmetic / subscription 想定) は対象外。
+    @pytest.mark.parametrize(
+        "product_type",
+        [
+            pytest.param("cosmetic", id="cosmetic は card_pack を参照しないので対象外になる"),
+            pytest.param("subscription", id="subscription は card_pack を参照しないので対象外になる"),
+        ],
+    )
+    def test_card_packを参照しないtypeは抽出対象から外れる(self, tmp_path: Path, product_type):
         path = tmp_path / "products.yaml"
         _write_yaml(path, {
             "products": [
                 {"product_id": "fs_she", "type": "faction_set", "card_pack_id": "faction_set_she"},
-                {"product_id": "stamp_a", "type": "cosmetic"},
+                {"product_id": "other", "type": product_type},
             ],
         })
         assert v.load_shop_card_pack_refs(path) == {"fs_she": "faction_set_she"}
+
+    @pytest.mark.parametrize(
+        "product_type",
+        [
+            pytest.param("faction_set", id="faction_set が card_pack_id を欠くとき、ValueError になる"),
+            pytest.param("card_pack", id="card_pack が card_pack_id を欠くとき、ValueError になる"),
+        ],
+    )
+    def test_card_pack_idが必須のtypeでキーが無ければValueErrorになる(self, tmp_path: Path, product_type):
+        path = tmp_path / "products.yaml"
+        _write_yaml(path, {"products": [{"product_id": "p1", "type": product_type}]})
+        with pytest.raises(ValueError, match="requires 'card_pack_id'"):
+            v.load_shop_card_pack_refs(path)
+
+    @pytest.mark.parametrize(
+        "product",
+        [
+            pytest.param(
+                {"product_id": "p1", "type": "bundle"},
+                id="未知の type のとき、card_pack 参照の要否を判定できずValueErrorになる",
+            ),
+            pytest.param(
+                {"product_id": "p1"},
+                id="type が無いとき、card_pack 参照の要否を判定できずValueErrorになる",
+            ),
+        ],
+    )
+    def test_分類できないtypeはValueErrorになる(self, tmp_path: Path, product):
+        path = tmp_path / "products.yaml"
+        _write_yaml(path, {"products": [product]})
+        with pytest.raises(ValueError, match="unknown type"):
+            v.load_shop_card_pack_refs(path)
+
+    def test_product_idが無ければValueErrorになる(self, tmp_path: Path):
+        path = tmp_path / "products.yaml"
+        _write_yaml(path, {"products": [{"type": "faction_set", "card_pack_id": "x"}]})
+        with pytest.raises(ValueError, match="requires 'product_id'"):
+            v.load_shop_card_pack_refs(path)
 
     def test_top_levelのproductsキーが無ければValueErrorになる(self, tmp_path: Path):
         path = tmp_path / "products.yaml"
@@ -47,17 +91,17 @@ class TestShopのcard_pack_id抽出:
         with pytest.raises(ValueError, match="top-level 'products' key is required"):
             v.load_shop_card_pack_refs(path)
 
-    @pytest.mark.parametrize(
-        "yaml_text",
-        [
-            pytest.param("products:\n", id="products: の値が空のとき、参照 0 件として空の辞書になる"),
-            pytest.param("products: []\n", id="products が空リストのとき、空の辞書になる"),
-        ],
-    )
-    def test_productsが空のとき抽出結果は空の辞書になる(self, tmp_path: Path, yaml_text):
+    def test_productsの値が空のときリストでない異常としてValueErrorになる(self, tmp_path: Path):
         path = tmp_path / "products.yaml"
-        path.write_text(yaml_text, encoding="utf-8")
-        assert v.load_shop_card_pack_refs(path) == {}
+        path.write_text("products:\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="'products' must be a list"):
+            v.load_shop_card_pack_refs(path)
+
+    def test_productsが空リストのとき検証対象が無い異常としてValueErrorになる(self, tmp_path: Path):
+        path = tmp_path / "products.yaml"
+        path.write_text("products: []\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="'products' must not be empty"):
+            v.load_shop_card_pack_refs(path)
 
 
 class TestCardPackの一覧抽出:
@@ -77,17 +121,23 @@ class TestCardPackの一覧抽出:
         with pytest.raises(ValueError, match="top-level 'packs' key is required"):
             v.load_card_pack_ids(path)
 
-    @pytest.mark.parametrize(
-        "yaml_text",
-        [
-            pytest.param("packs:\n", id="packs: の値が空のとき、pack 0 件として空集合になる"),
-            pytest.param("packs: []\n", id="packs が空リストのとき、空集合になる"),
-        ],
-    )
-    def test_packsが空のとき抽出結果は空集合になる(self, tmp_path: Path, yaml_text):
+    def test_packsの値が空のときリストでない異常としてValueErrorになる(self, tmp_path: Path):
         path = tmp_path / "card_packs.yaml"
-        path.write_text(yaml_text, encoding="utf-8")
-        assert v.load_card_pack_ids(path) == set()
+        path.write_text("packs:\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="'packs' must be a list"):
+            v.load_card_pack_ids(path)
+
+    def test_packsが空リストのとき検証対象が無い異常としてValueErrorになる(self, tmp_path: Path):
+        path = tmp_path / "card_packs.yaml"
+        path.write_text("packs: []\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="'packs' must not be empty"):
+            v.load_card_pack_ids(path)
+
+    def test_pack_idが無ければValueErrorになる(self, tmp_path: Path):
+        path = tmp_path / "card_packs.yaml"
+        _write_yaml(path, {"packs": [{"cards": []}]})
+        with pytest.raises(ValueError, match="requires 'pack_id'"):
+            v.load_card_pack_ids(path)
 
 
 class Test欠落参照の検出:

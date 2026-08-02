@@ -29,29 +29,83 @@ except ImportError:
 
 _JST_OFFSET_HOURS = 9
 
+# 未知の type を「card_pack 参照を持たない」と推定すると検証対象から静かに外れるため、
+# どちらの集合にも属さない type はエラーにする。
+_CARD_PACK_REQUIRED_TYPES = frozenset({"faction_set", "card_pack"})
+_CARD_PACK_UNRELATED_TYPES = frozenset({"cosmetic", "subscription"})
+
+
+def _require_non_empty_list(data: dict, key: str, source: Path) -> list:
+    """YAML のトップレベルキーが空でないリストであることを確認して返す.
+
+    Raises:
+        ValueError: キーが存在しない、リストでない、または空の場合。
+    """
+    if not isinstance(data, dict) or key not in data:
+        raise ValueError(f"{source}: top-level '{key}' key is required")
+    value = data[key]
+    if not isinstance(value, list):
+        raise ValueError(f"{source}: '{key}' must be a list")
+    if not value:
+        raise ValueError(f"{source}: '{key}' must not be empty")
+    return value
+
 
 def load_shop_card_pack_refs(shop_yaml: Path) -> dict[str, str]:
     """shop products.yaml から product_id -> card_pack_id の dict を返す.
 
-    card_pack_id を持つ product type (faction_set / card_pack) のみ抽出。
-    cosmetic / subscription 等は card_pack 参照を持たないのでスキップ。
+    card_pack を参照する type (faction_set / card_pack) を対象とし、参照を持たない
+    type (cosmetic / subscription) は対象外とする。
+
+    Raises:
+        ValueError: products が空、product が dict でない、product_id が無い、
+            type が未知、または対象 type が card_pack_id を欠く場合。
     """
     data = yaml.safe_load(shop_yaml.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or "products" not in data:
-        raise ValueError(f"{shop_yaml}: top-level 'products' key is required")
+    products = _require_non_empty_list(data, "products", shop_yaml)
+
     refs: dict[str, str] = {}
-    for p in data["products"] or []:
-        if "card_pack_id" in p:
-            refs[p["product_id"]] = p["card_pack_id"]
+    for p in products:
+        if not isinstance(p, dict):
+            raise ValueError(f"{shop_yaml}: every product must be a mapping, got {p!r}")
+        product_id = p.get("product_id")
+        if not product_id:
+            raise ValueError(f"{shop_yaml}: every product requires 'product_id'")
+        product_type = p.get("type")
+        if product_type in _CARD_PACK_UNRELATED_TYPES:
+            continue
+        if product_type not in _CARD_PACK_REQUIRED_TYPES:
+            raise ValueError(
+                f"{shop_yaml}: product '{product_id}' has unknown type {product_type!r}; "
+                f"cannot tell whether it must reference a card_pack"
+            )
+        if "card_pack_id" not in p:
+            raise ValueError(
+                f"{shop_yaml}: product '{product_id}' of type '{product_type}' "
+                f"requires 'card_pack_id'"
+            )
+        refs[product_id] = p["card_pack_id"]
     return refs
 
 
 def load_card_pack_ids(card_yaml: Path) -> set[str]:
-    """card card_packs.yaml から pack_id 集合を返す."""
+    """card card_packs.yaml から pack_id 集合を返す.
+
+    Raises:
+        ValueError: packs が空、pack が dict でない、または pack_id が無い場合。
+    """
     data = yaml.safe_load(card_yaml.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or "packs" not in data:
-        raise ValueError(f"{card_yaml}: top-level 'packs' key is required")
-    return {p["pack_id"] for p in data["packs"] or []}
+    packs = _require_non_empty_list(data, "packs", card_yaml)
+
+    pack_ids: set[str] = set()
+    for p in packs:
+        if not isinstance(p, dict):
+            raise ValueError(f"{card_yaml}: every pack must be a mapping, got {p!r}")
+        pack_id = p.get("pack_id")
+        if not pack_id:
+            raise ValueError(f"{card_yaml}: every pack requires 'pack_id'")
+        pack_ids.add(pack_id)
+    return pack_ids
 
 
 def find_missing(shop_refs: dict[str, str], card_pack_ids: set[str]) -> list[tuple[str, str]]:

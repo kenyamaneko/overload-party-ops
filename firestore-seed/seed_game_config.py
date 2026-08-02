@@ -116,7 +116,14 @@ def fetch_from_lock(lock_path: Path, workdir: Path, token: str | None) -> Path:
 
     repo = entry["repo"]
     path = entry["path"]
-    ref = entry.get("ref", "main")
+    # ref の欠落を main で補うと、pin されているように見えて実際は追随する状態になり、
+    # どの初期値を投入したか後から再現できなくなる
+    if not entry.get("ref"):
+        raise SystemExit(
+            f"ERROR: {lock_path} `sources.{LOCK_SOURCE_KEY}` has no `ref`. "
+            "The source must pin a ref explicitly."
+        )
+    ref = entry["ref"]
 
     url = f"https://github.com/{repo}.git"
     env = github_auth_env(token)
