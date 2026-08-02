@@ -76,18 +76,22 @@ def run_gcloud_value(*args: str, allow_not_found: bool = False) -> str:
 def check_cloudsql(project: str) -> tuple[list[str], list[str]]:
     """Cloud SQL インスタンスの稼働状態を確認します。"""
     try:
-        state = run_gcloud_value(
+        state_and_tier = run_gcloud_value(
             "sql", "instances", "describe", CLOUDSQL_INSTANCE,
-            "--project", project, "--format=value(state)",
+            "--project", project, "--format=value(state,settings.tier)",
             allow_not_found=True,
         )
     except CommandError as e:
         return [], [f"Cloud SQL チェック失敗: {e}"]
-    if not state:
+    if not state_and_tier:
         return [], []
-    if state == "RUNNABLE":
-        return [f"Cloud SQL `{CLOUDSQL_INSTANCE}` が RUNNABLE ($0.19/hr)"], []
-    return [], []
+    # gcloud の value 形式は複数フィールドをタブで区切るため、指定した順に切り出す。
+    state, _, tier = state_and_tier.partition("\t")
+    if state != "RUNNABLE":
+        return [], []
+    if not tier:
+        return [], [f"Cloud SQL `{CLOUDSQL_INSTANCE}` のマシンタイプを取得できませんでした"]
+    return [f"Cloud SQL `{CLOUDSQL_INSTANCE}` が RUNNABLE ({tier})"], []
 
 
 def check_static_ips(project: str) -> tuple[list[str], list[str]]:
