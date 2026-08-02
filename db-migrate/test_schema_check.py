@@ -2,7 +2,7 @@
 import tempfile
 import os
 import pytest
-from schema_check import parse_schema, check, main
+from schema_check import SchemaParseError, parse_schema, check, main
 
 
 def _write_schema(tmp_path, name: str, content: str) -> str:
@@ -33,6 +33,17 @@ class TestスキーマDDLのパース:
         tables = parse_schema(sql)
         assert "users" in tables
         assert tables["users"] == {"id", "name", "email"}
+
+    def test_IF_NOT_EXISTS付きで定義されたテーブルのカラムを抽出する(self):
+        sql = """
+        CREATE TABLE IF NOT EXISTS news.news_articles (
+            id SERIAL PRIMARY KEY,
+            title TEXT NOT NULL,
+            body TEXT
+        );
+        """
+        tables = parse_schema(sql)
+        assert tables["news_articles"] == {"id", "title", "body"}
 
     def test_複数テーブルをそれぞれ抽出する(self):
         sql = """
@@ -150,6 +161,35 @@ class Test破壊的変更の検出:
         finally:
             os.unlink(old)
             os.unlink(new)
+
+    def test_IF_NOT_EXISTS付きで定義されたテーブルの削除もDROP_TABLE警告になる(self, tmp_path):
+        old = _write_schema(
+            tmp_path,
+            "old.sql",
+            """
+            CREATE TABLE IF NOT EXISTS news.news_articles (id SERIAL PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS news.news_article_translations (id SERIAL PRIMARY KEY);
+            """,
+        )
+        new = _write_schema(
+            tmp_path,
+            "new.sql",
+            "CREATE TABLE IF NOT EXISTS news.news_articles (id SERIAL PRIMARY KEY);",
+        )
+        assert check(old, new) == ["DROP TABLE: news_article_translations"]
+
+    def test_IF_NOT_EXISTS付きで定義されたテーブルのカラム削除もDROP_COLUMN警告になる(self, tmp_path):
+        old = _write_schema(
+            tmp_path,
+            "old.sql",
+            "CREATE TABLE IF NOT EXISTS support.inquiries (id SERIAL PRIMARY KEY, body TEXT);",
+        )
+        new = _write_schema(
+            tmp_path,
+            "new.sql",
+            "CREATE TABLE IF NOT EXISTS support.inquiries (id SERIAL PRIMARY KEY);",
+        )
+        assert check(old, new) == ["DROP COLUMN: inquiries.body"]
 
     def test_旧スキーマが空なら警告しない(self):
         old_sql = ""
@@ -274,11 +314,44 @@ class Test複数破壊的変更の検出:
         assert warnings == ["DROP TABLE: logs"]
 
 
-class TestCLIの終了コード:
-    """exit 2 = 引数不正、exit 1 = 破壊的変更あり、exit 0 = 安全。
-    CI のゲートがこの終了コードで apply 可否を判断する。
-    """
+class Test解析できないDDLの検出:
+    @pytest.mark.parametrize(
+        "unparseable_ddl",
+        [
+            pytest.param(
+                "CREATE TABLE games_2026 PARTITION OF games "
+                "FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');",
+                id="パーティションの定義が解析できないとき、中断する",
+            ),
+            pytest.param(
+                "CREATE TABLE active_users AS SELECT id FROM users;",
+                id="問い合わせ結果からの定義が解析できないとき、中断する",
+            ),
+        ],
+    )
+    def test_解析できないCREATE_TABLEが混ざるとき件数の食い違いを理由に中断する(self, unparseable_ddl):
+        sql = "CREATE TABLE users (id SERIAL PRIMARY KEY);\n" + unparseable_ddl
+        with pytest.raises(SchemaParseError, match="2 CREATE TABLE statement.*only 1"):
+            parse_schema(sql)
 
+    def test_旧スキーマが解析できないとき旧スキーマのファイル名を添えて中断する(self, tmp_path):
+        old = _write_schema(
+            tmp_path, "old.sql", "CREATE TABLE t PARTITION OF p FOR VALUES FROM (1) TO (2);"
+        )
+        new = _write_schema(tmp_path, "new.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY);")
+        with pytest.raises(SchemaParseError, match=r"old\.sql"):
+            check(old, new)
+
+    def test_新スキーマが解析できないとき新スキーマのファイル名を添えて中断する(self, tmp_path):
+        old = _write_schema(tmp_path, "old.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY);")
+        new = _write_schema(
+            tmp_path, "new.sql", "CREATE TABLE t PARTITION OF p FOR VALUES FROM (1) TO (2);"
+        )
+        with pytest.raises(SchemaParseError, match=r"new\.sql"):
+            check(old, new)
+
+
+class TestCLIの終了コード:
     @pytest.mark.parametrize(
         "argv",
         [
@@ -314,3 +387,17 @@ class TestCLIの終了コード:
             main()
         assert exc.value.code == 1
         assert "DROP COLUMN: users.email" in capsys.readouterr().out
+
+    def test_解析できないDDLがあればexit3で止め解析できた件数を出力する(self, monkeypatch, tmp_path, capsys):
+        old = _write_schema(tmp_path, "old.sql", "CREATE TABLE users (id SERIAL PRIMARY KEY);")
+        new = _write_schema(
+            tmp_path,
+            "new.sql",
+            "CREATE TABLE users (id SERIAL PRIMARY KEY);\n"
+            "CREATE TABLE users_2026 PARTITION OF users FOR VALUES FROM (1) TO (2);",
+        )
+        monkeypatch.setattr("sys.argv", ["schema_check", old, new])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 3
+        assert "2 CREATE TABLE statement(s) present but only 1" in capsys.readouterr().out

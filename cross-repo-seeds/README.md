@@ -10,6 +10,8 @@ shop / card 両 repo の seed YAML 間の参照整合性を検証し、結果を
 
 不整合があれば「どの shop product がどの card_pack_id を参照していて card 側に存在しないか」を Slack に報告し non-zero exit する。
 
+card_pack 参照の要否は shop の product type で決まる。`faction_set` / `card_pack` は `card_pack_id` を必須とし、`cosmetic` / `subscription` は対象外とする。`card_pack_id` の欠落・分類できない type・空の `products` / `packs` はいずれも検証が成立しない状態として non-zero exit する。0 件を検証成功として扱うと、SSoT の欠落がそのまま OK 通知になるため。
+
 ## トリガー
 
 - cron: 18:00 UTC = 03:00 JST 翌日 (daily)

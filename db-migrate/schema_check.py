@@ -3,13 +3,23 @@
 import re
 import sys
 
-TABLE_RE = re.compile(
-    r"CREATE\s+TABLE\s+((?:\w+\.)?\w+)\s*\((.*?)\);",
+TABLE_DEFINITION_RE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\w+\.)?\w+)\s*\((.*?)\);",
     re.IGNORECASE | re.DOTALL,
 )
+CREATE_TABLE_KEYWORD_RE = re.compile(r"CREATE\s+TABLE\b", re.IGNORECASE)
 CONSTRAINT_KEYWORDS = {
     "PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT", "INDEX", "EXCLUDE",
 }
+
+EXIT_SAFE = 0
+EXIT_DESTRUCTIVE = 1
+EXIT_USAGE = 2
+EXIT_UNPARSEABLE = 3
+
+
+class SchemaParseError(Exception):
+    """DDL 中の CREATE TABLE を解析できなかったことを表す例外。"""
 
 
 def _extract_columns(body: str) -> set[str]:
@@ -37,23 +47,55 @@ def _extract_columns(body: str) -> set[str]:
 
 
 def parse_schema(sql: str) -> dict[str, set[str]]:
-    """SQL からテーブル定義をパースし、テーブル名→カラム名集合のマップを返します。"""
+    """SQL からテーブル定義をパースし、テーブル名→カラム名集合のマップを返します。
+
+    Raises:
+        SchemaParseError: SQL 中の CREATE TABLE に解析できないものがある場合。
+    """
     tables: dict[str, set[str]] = {}
-    for match in TABLE_RE.finditer(sql):
+    parsed_count = 0
+    for match in TABLE_DEFINITION_RE.finditer(sql):
+        parsed_count += 1
         qualified = match.group(1).lower()
         # schema 修飾の有無を吸収するため unqualified 名をキーにする
         table_name = qualified.split(".", 1)[1] if "." in qualified else qualified
         body = match.group(2)
         tables[table_name] = _extract_columns(body)
+
+    # 解析できない CREATE TABLE を 0 件と同一視すると、そのテーブルの削除が
+    # 破壊的変更として警告されないまま適用されるため、件数の食い違いで中断する
+    declared_count = len(CREATE_TABLE_KEYWORD_RE.findall(sql))
+    if parsed_count != declared_count:
+        raise SchemaParseError(
+            f"{declared_count} CREATE TABLE statement(s) present but only "
+            f"{parsed_count} could be parsed. Unparsed tables would be silently "
+            f"excluded from the destructive-change check."
+        )
     return tables
 
 
+def _parse_schema_file(path: str) -> dict[str, set[str]]:
+    """スキーマファイルを読み込んでパースします。
+
+    Raises:
+        SchemaParseError: 解析できない CREATE TABLE がある場合。どのファイルかを併記する。
+    """
+    with open(path) as f:
+        sql = f.read()
+    try:
+        return parse_schema(sql)
+    except SchemaParseError as e:
+        raise SchemaParseError(f"{path}: {e}") from e
+
+
 def check(old_path: str, new_path: str) -> list[str]:
-    """新旧スキーマを比較し、破壊的変更の警告リストを返します。"""
-    with open(old_path) as f:
-        old_schema = parse_schema(f.read())
-    with open(new_path) as f:
-        new_schema = parse_schema(f.read())
+    """新旧スキーマを比較し、破壊的変更の警告リストを返します。
+
+    Raises:
+        SchemaParseError: いずれかのスキーマに解析できない CREATE TABLE がある場合。
+    """
+    old_schema = _parse_schema_file(old_path)
+    new_schema = _parse_schema_file(new_path)
 
     warnings: list[str] = []
 
@@ -73,14 +115,21 @@ def main() -> None:
     """スキーマ安全性チェックのメインエントリーポイントです。"""
     if len(sys.argv) != 3:
         print(f"Usage: {sys.argv[0]} <old_schema.sql> <new_schema.sql>")
-        sys.exit(2)
+        sys.exit(EXIT_USAGE)
 
     old_path, new_path = sys.argv[1], sys.argv[2]
-    warnings = check(old_path, new_path)
+    try:
+        warnings = check(old_path, new_path)
+    except SchemaParseError as e:
+        print(f"⚠ Schema safety check: cannot parse schema: {e}")
+        print()
+        print("The destructive-change check cannot cover tables it failed to parse.")
+        print("Extend db-migrate/schema_check.py to handle the DDL form above.")
+        sys.exit(EXIT_UNPARSEABLE)
 
     if not warnings:
         print("Schema safety check: OK (no destructive changes)")
-        sys.exit(0)
+        sys.exit(EXIT_SAFE)
 
     print("⚠ Schema safety check: destructive changes detected!")
     for w in warnings:
@@ -88,7 +137,7 @@ def main() -> None:
     print()
     print("If intentional, re-run the manual workflow with dry_run=true to preview,")
     print("then confirm the changes are safe before applying.")
-    sys.exit(1)
+    sys.exit(EXIT_DESTRUCTIVE)
 
 
 if __name__ == "__main__":

@@ -189,7 +189,7 @@ class TestユニオンSQLの結合:
             fetch_schemas.fetch_sources({"schemas": {}}, tmp_path, None, None, with_seeds=False)
 
     def test_エントリが1件のときバナーとそのDDLがunionに載る(self, tmp_path):
-        lock = {"schemas": [{"name": "shop", "repo": "o/r", "path": "db.sql"}]}
+        lock = {"schemas": [{"name": "shop", "repo": "o/r", "path": "db.sql", "ref": "main"}]}
         fake = self._fake_clone_sparse({"shop": "CREATE TABLE t1 (id INT);"})
         with patch("fetch_schemas._clone_sparse", side_effect=fake):
             sources = fetch_schemas.fetch_sources(lock, tmp_path, None, None, with_seeds=False)
@@ -199,8 +199,8 @@ class TestユニオンSQLの結合:
 
     def test_エントリが複数件のときlock記載順にDDLが結合される(self, tmp_path):
         lock = {"schemas": [
-            {"name": "shop", "repo": "o/shop", "path": "db.sql"},
-            {"name": "card", "repo": "o/card", "path": "db.sql"},
+            {"name": "shop", "repo": "o/shop", "path": "db.sql", "ref": "main"},
+            {"name": "card", "repo": "o/card", "path": "db.sql", "ref": "main"},
         ]}
         fake = self._fake_clone_sparse({
             "shop": "CREATE TABLE shop_t (id INT);",
@@ -213,13 +213,32 @@ class TestユニオンSQLの結合:
         assert "CREATE TABLE shop_t (id INT);" in union
         assert "CREATE TABLE card_t (id INT);" in union
 
-    def test_エントリにrefが無いときmainが使われる(self, tmp_path):
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            pytest.param(
+                {"name": "shop", "repo": "o/r", "path": "db.sql"},
+                id="ref キーが無いとき、取得せず中断する",
+            ),
+            pytest.param(
+                {"name": "shop", "repo": "o/r", "path": "db.sql", "ref": None},
+                id="ref が空のとき、取得せず中断する",
+            ),
+        ],
+    )
+    def test_refがpinされていないエントリはSystemExitで中断する(self, tmp_path, entry):
+        with patch("fetch_schemas._clone_sparse") as clone:
+            with pytest.raises(SystemExit, match=r"has no `ref`"):
+                fetch_schemas.fetch_sources({"schemas": [entry]}, tmp_path, None, None,
+                                            with_seeds=False)
+        clone.assert_not_called()
+
+    def test_ref_overrideを指定してもエントリのref欠落はSystemExitで中断する(self, tmp_path):
         lock = {"schemas": [{"name": "shop", "repo": "o/r", "path": "db.sql"}]}
-        fake = self._fake_clone_sparse({"shop": "CREATE TABLE t1 (id INT);"})
-        with patch("fetch_schemas._clone_sparse", side_effect=fake):
-            sources = fetch_schemas.fetch_sources(lock, tmp_path, None, None, with_seeds=False)
-        assert "@main" in fetch_schemas.render_union(sources)
-        assert fake.calls[0]["ref"] == "main"
+        with patch("fetch_schemas._clone_sparse") as clone:
+            with pytest.raises(SystemExit, match=r"has no `ref`"):
+                fetch_schemas.fetch_sources(lock, tmp_path, None, "TST-REF", with_seeds=False)
+        clone.assert_not_called()
 
     def test_ref_overrideを指定したとき全エントリのrefが上書きされる(self, tmp_path):
         lock = {"schemas": [{"name": "shop", "repo": "o/r", "path": "db.sql", "ref": "v1.0.0"}]}
@@ -231,7 +250,7 @@ class TestユニオンSQLの結合:
         assert "@v1.0.0" not in union
 
     def test_スキーマ名が不正なときcloneせずSystemExitで中断する(self, tmp_path):
-        lock = {"schemas": [{"name": "../x", "repo": "o/r", "path": "db.sql"}]}
+        lock = {"schemas": [{"name": "../x", "repo": "o/r", "path": "db.sql", "ref": "main"}]}
         with patch("fetch_schemas._clone_sparse") as clone:
             with pytest.raises(SystemExit):
                 fetch_schemas.fetch_sources(lock, tmp_path, None, None, with_seeds=False)
