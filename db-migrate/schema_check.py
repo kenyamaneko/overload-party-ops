@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""新旧スキーマを比較し、破壊的変更（テーブル削除・カラム削除）を検出する。"""
+"""新旧の union SQL を比較し、破壊的変更（テーブル削除・カラム削除）を検出する。
+
+テーブルは所有サービスで修飾した名前で対応付ける。別サービスが同名のテーブルを
+持つため、修飾しないと片方の定義がもう片方を隠し、その削除を検出できなくなる。
+"""
 import re
 import sys
+
+from union_format import split_by_source
 
 TABLE_DEFINITION_RE = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\w+\.)?\w+)\s*\((.*?)\);",
@@ -15,11 +21,15 @@ CONSTRAINT_KEYWORDS = {
 EXIT_SAFE = 0
 EXIT_DESTRUCTIVE = 1
 EXIT_USAGE = 2
-EXIT_UNPARSEABLE = 3
+EXIT_UNCHECKABLE = 3
 
 
 class SchemaParseError(Exception):
     """DDL 中の CREATE TABLE を解析できなかったことを表す例外。"""
+
+
+class TableAttributionError(Exception):
+    """テーブルを所有サービス 1 つに対応付けられなかったことを表す例外。"""
 
 
 def _extract_columns(body: str) -> set[str]:
@@ -46,25 +56,47 @@ def _extract_columns(body: str) -> set[str]:
     return columns
 
 
-def parse_schema(sql: str) -> dict[str, set[str]]:
-    """SQL からテーブル定義をパースし、テーブル名→カラム名集合のマップを返します。
+def parse_schema(union_sql: str) -> dict[str, set[str]]:
+    """union SQL からテーブル定義をパースし、テーブル名→カラム名集合のマップを返します。
+
+    Args:
+        union_sql: fetch-schemas.py が生成した union SQL。
+
+    Returns:
+        `<所有サービス>.<テーブル名>` をキーとし、カラム名集合を値とするマップ。
 
     Raises:
         SchemaParseError: SQL 中の CREATE TABLE に解析できないものがある場合。
+        TableAttributionError: 所有サービスを特定できない、または同じ所有サービスで
+            テーブル名が重複する場合。
     """
     tables: dict[str, set[str]] = {}
     parsed_count = 0
-    for match in TABLE_DEFINITION_RE.finditer(sql):
-        parsed_count += 1
-        qualified = match.group(1).lower()
-        # schema 修飾の有無を吸収するため unqualified 名をキーにする
-        table_name = qualified.split(".", 1)[1] if "." in qualified else qualified
-        body = match.group(2)
-        tables[table_name] = _extract_columns(body)
+    for owner, section in split_by_source(union_sql):
+        for match in TABLE_DEFINITION_RE.finditer(section):
+            parsed_count += 1
+            qualified = match.group(1).lower()
+            # DDL 側の schema 修飾はサービスごとに書き方が揺れるため、修飾を外して
+            # 所有サービスで付け直す
+            table_name = qualified.split(".", 1)[1] if "." in qualified else qualified
+            if owner is None:
+                raise TableAttributionError(
+                    f"table {table_name!r} appears before any source header. "
+                    "Rebuild the union with db-migrate/fetch-schemas.py so that every "
+                    "table can be attributed to the service that owns it."
+                )
+            key = f"{owner}.{table_name}"
+            if key in tables:
+                raise TableAttributionError(
+                    f"table {key!r} is defined more than once. One definition would "
+                    "hide the other, and columns dropped from the hidden one would go "
+                    "unreported."
+                )
+            tables[key] = _extract_columns(match.group(2))
 
     # 解析できない CREATE TABLE を 0 件と同一視すると、そのテーブルの削除が
     # 破壊的変更として警告されないまま適用されるため、件数の食い違いで中断する
-    declared_count = len(CREATE_TABLE_KEYWORD_RE.findall(sql))
+    declared_count = len(CREATE_TABLE_KEYWORD_RE.findall(union_sql))
     if parsed_count != declared_count:
         raise SchemaParseError(
             f"{declared_count} CREATE TABLE statement(s) present but only "
@@ -79,13 +111,17 @@ def _parse_schema_file(path: str) -> dict[str, set[str]]:
 
     Raises:
         SchemaParseError: 解析できない CREATE TABLE がある場合。どのファイルかを併記する。
+        TableAttributionError: テーブルを所有サービスに対応付けられない場合。
+            どのファイルかを併記する。
     """
     with open(path) as f:
-        sql = f.read()
+        union_sql = f.read()
     try:
-        return parse_schema(sql)
+        return parse_schema(union_sql)
     except SchemaParseError as e:
         raise SchemaParseError(f"{path}: {e}") from e
+    except TableAttributionError as e:
+        raise TableAttributionError(f"{path}: {e}") from e
 
 
 def check(old_path: str, new_path: str) -> list[str]:
@@ -93,6 +129,8 @@ def check(old_path: str, new_path: str) -> list[str]:
 
     Raises:
         SchemaParseError: いずれかのスキーマに解析できない CREATE TABLE がある場合。
+        TableAttributionError: いずれかのスキーマでテーブルを所有サービスに
+            対応付けられない場合。
     """
     old_schema = _parse_schema_file(old_path)
     new_schema = _parse_schema_file(new_path)
@@ -125,7 +163,13 @@ def main() -> None:
         print()
         print("The destructive-change check cannot cover tables it failed to parse.")
         print("Extend db-migrate/schema_check.py to handle the DDL form above.")
-        sys.exit(EXIT_UNPARSEABLE)
+        sys.exit(EXIT_UNCHECKABLE)
+    except TableAttributionError as e:
+        print(f"⚠ Schema safety check: cannot attribute a table to its owner: {e}")
+        print()
+        print("Tables are compared per owning service, so every CREATE TABLE in the")
+        print("union must belong to exactly one service listed in schemas.lock.yaml.")
+        sys.exit(EXIT_UNCHECKABLE)
 
     if not warnings:
         print("Schema safety check: OK (no destructive changes)")
