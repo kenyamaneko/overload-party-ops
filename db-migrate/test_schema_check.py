@@ -119,6 +119,80 @@ class TestスキーマDDLのパース:
         assert tables["account.users"] == {"id", "name"}
 
 
+class Testコメントを含むDDLのパース:
+    def test_全てのカラム定義に行末コメントが付いているとき全カラムを抽出する(self):
+        tables = parse_schema(_union(("shop", """
+        CREATE TABLE shop.outbox_events (
+          event_id          UUID NOT NULL,                        -- payload 内 eventId と一致
+          event_type        VARCHAR(100) NOT NULL,                -- 論理イベント種別
+          payload           JSONB NOT NULL,                       -- イベント本体
+          created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),   -- enqueue 日時
+          published_at      TIMESTAMPTZ,                          -- NULL = 未配信
+          PRIMARY KEY (event_id)
+        );
+        """)))
+        assert tables["shop.outbox_events"] == {
+            "event_id", "event_type", "payload", "created_at", "published_at",
+        }
+
+    def test_行末コメントにカンマと括弧が含まれるとき後続のカラムも抽出する(self):
+        tables = parse_schema(_union(("account", """
+        CREATE TABLE account.player_factions (
+          player_id UUID NOT NULL,  -- 陣営名 (SHE, Tenki, Sugar)
+          faction   VARCHAR(20)     -- 所属陣営（NULL: 全陣営共通）
+        );
+        """)))
+        assert tables["account.player_factions"] == {"player_id", "faction"}
+
+    def test_ブロックコメントがカラム定義の間にあるとき前後のカラムを抽出する(self):
+        tables = parse_schema(_union(("card", """
+        CREATE TABLE card.decks (
+          deck_id BIGINT NOT NULL,
+          /* 複数行にわたる
+             説明 */
+          name TEXT NOT NULL
+        );
+        """)))
+        assert tables["card.decks"] == {"deck_id", "name"}
+
+    def test_入れ子のブロックコメントがカラム定義の間にあるとき前後のカラムを抽出する(self):
+        tables = parse_schema(_union(("card", """
+        CREATE TABLE card.decks (
+          deck_id BIGINT NOT NULL,
+          /* 説明 /* 補足 */ の続き */
+          name TEXT NOT NULL
+        );
+        """)))
+        assert tables["card.decks"] == {"deck_id", "name"}
+
+    def test_初期値の文字列に含まれるハイフン2個をコメントとして扱わない(self):
+        tables = parse_schema(_union(("news", """
+        CREATE TABLE news.news_articles (
+          slug  TEXT NOT NULL DEFAULT '--',
+          title TEXT NOT NULL
+        );
+        """)))
+        assert tables["news.news_articles"] == {"slug", "title"}
+
+    def test_コメントにCREATE_TABLEの語があるときテーブル数の食い違いとしない(self):
+        tables = parse_schema(_union(("support", """
+        -- 問い合わせの CREATE TABLE は support スキーマに置く
+        CREATE TABLE support.inquiries (inquiry_id BIGINT NOT NULL, body TEXT);
+        """)))
+        assert set(tables) == {"support.inquiries"}
+
+    def test_関数本体にCREATE_TABLEがあるときテーブル数の食い違いとしない(self):
+        tables = parse_schema(_union(("battle", """
+        CREATE FUNCTION battle.bootstrap() RETURNS void AS $$
+        BEGIN
+          CREATE TABLE battle.scratch (id INT);
+        END;
+        $$ LANGUAGE plpgsql;
+        CREATE TABLE battle.games (game_id UUID NOT NULL, status TEXT);
+        """)))
+        assert set(tables) == {"battle.games"}
+
+
 class Test同名テーブルの所有サービスによる区別:
     def test_別のサービスが同名のテーブルを持つときそれぞれ独立したテーブルとして読み取る(self):
         tables = parse_schema(_union(
@@ -214,6 +288,22 @@ class Test破壊的変更の検出:
         )
         new = _write_union(tmp_path, "new.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
         assert check(old, new) == ["DROP TABLE: account.logs"]
+
+    def test_行末コメントの付いたカラムを削除するとDROP_COLUMN警告になる(self, tmp_path):
+        old = _write_union(tmp_path, "old.sql", ("shop", """
+        CREATE TABLE shop.outbox_events (
+          event_id     UUID NOT NULL,   -- payload 内 eventId と一致
+          last_error   TEXT,            -- 直近エラーメッセージ
+          PRIMARY KEY (event_id)
+        );
+        """))
+        new = _write_union(tmp_path, "new.sql", ("shop", """
+        CREATE TABLE shop.outbox_events (
+          event_id     UUID NOT NULL,   -- payload 内 eventId と一致
+          PRIMARY KEY (event_id)
+        );
+        """))
+        assert check(old, new) == ["DROP COLUMN: shop.outbox_events.last_error"]
 
     def test_IF_NOT_EXISTS付きで定義されたテーブルの削除もDROP_TABLE警告になる(self, tmp_path):
         old = _write_union(
@@ -402,6 +492,33 @@ class Test解析できないDDLの検出:
             check(old, new)
 
 
+class Testカラムを読み取れないDDLの検出:
+    def test_カラムを1つも定義していないテーブルがあるとき中断する(self):
+        union = _union(("battle", "CREATE TABLE battle.games ();"))
+        with pytest.raises(SchemaParseError, match="'battle.games' yielded no columns"):
+            parse_schema(union)
+
+    def test_カラム名にも表制約にも分類できない要素があるとき中断する(self):
+        union = _union(("battle", "CREATE TABLE battle.games (game_id UUID, 'status' TEXT);"))
+        with pytest.raises(SchemaParseError, match="neither a column name nor a table constraint"):
+            parse_schema(union)
+
+    def test_カラムリストの括弧が閉じられないとき中断する(self):
+        union = _union(("battle", "CREATE TABLE battle.games (game_id UUID NOT NULL, status TEXT;"))
+        with pytest.raises(SchemaParseError, match="unbalanced parentheses"):
+            parse_schema(union)
+
+    def test_文字列リテラルが閉じられないとき中断する(self):
+        union = _union(("battle", "CREATE TABLE battle.games (status TEXT NOT NULL DEFAULT 'idle);"))
+        with pytest.raises(SchemaParseError, match="unterminated ' quoted text"):
+            parse_schema(union)
+
+    def test_ブロックコメントが閉じられないとき中断する(self):
+        union = _union(("battle", "CREATE TABLE battle.games (game_id UUID); /* 続き"))
+        with pytest.raises(SchemaParseError, match="unterminated block comment"):
+            parse_schema(union)
+
+
 class TestCLIの終了コード:
     @pytest.mark.parametrize(
         "argv",
@@ -454,6 +571,15 @@ class TestCLIの終了コード:
             main()
         assert exc.value.code == 3
         assert "2 CREATE TABLE statement(s) present but only 1" in capsys.readouterr().out
+
+    def test_カラムを読み取れないテーブルがあればexit3で止め該当テーブルを出力する(self, monkeypatch, tmp_path, capsys):
+        old = _write_union(tmp_path, "old.sql", ("battle", "CREATE TABLE battle.games (game_id UUID);"))
+        new = _write_union(tmp_path, "new.sql", ("battle", "CREATE TABLE battle.games ();"))
+        monkeypatch.setattr("sys.argv", ["schema_check", old, new])
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 3
+        assert "table 'battle.games' yielded no columns" in capsys.readouterr().out
 
     def test_所有サービスを特定できないテーブルがあればexit3で止め該当テーブルを出力する(self, monkeypatch, tmp_path, capsys):
         old = _write_schema(tmp_path, "old.sql", "")

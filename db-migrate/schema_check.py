@@ -9,11 +9,13 @@ import sys
 
 from union_format import split_by_source
 
-TABLE_DEFINITION_RE = re.compile(
-    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\w+\.)?\w+)\s*\((.*?)\);",
-    re.IGNORECASE | re.DOTALL,
+TABLE_HEADER_RE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\w+\.)?\w+)\s*\(",
+    re.IGNORECASE,
 )
 CREATE_TABLE_KEYWORD_RE = re.compile(r"CREATE\s+TABLE\b", re.IGNORECASE)
+DOLLAR_QUOTE_RE = re.compile(r"\$(?:[A-Za-z_]\w*)?\$")
+COLUMN_IDENTIFIER_RE = re.compile(r'^(?:"[^"]+"|\w+)$')
 CONSTRAINT_KEYWORDS = {
     "PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT", "INDEX", "EXCLUDE",
 }
@@ -25,34 +27,281 @@ EXIT_UNCHECKABLE = 3
 
 
 class SchemaParseError(Exception):
-    """DDL 中の CREATE TABLE を解析できなかったことを表す例外。"""
+    """DDL のテーブル定義またはカラム定義を解析できなかったことを表す例外。"""
 
 
 class TableAttributionError(Exception):
     """テーブルを所有サービス 1 つに対応付けられなかったことを表す例外。"""
 
 
-def _extract_columns(body: str) -> set[str]:
-    """CREATE TABLE 本体からカラム名を抽出します。
+def _quoted_region_end(sql: str, start: int) -> int | None:
+    """指定位置から始まる引用領域の終端の次の位置を返します。
+
+    Args:
+        sql: 走査対象の SQL。
+        start: 判定する位置。
+
+    Returns:
+        文字列リテラル・引用識別子・ドル引用のいずれかが始まるとき、それを閉じた
+        直後の位置。引用が始まらないときは None。
+
+    Raises:
+        SchemaParseError: 引用が閉じられないまま SQL が終わる場合。
+    """
+    quote = sql[start]
+    if quote in ("'", '"'):
+        i = start + 1
+        while i < len(sql):
+            if sql[i] != quote:
+                i += 1
+            elif sql[i + 1:i + 2] == quote:
+                i += 2
+            else:
+                return i + 1
+        raise SchemaParseError(
+            f"unterminated {quote} quoted text starting at {sql[start:start + 40]!r}"
+        )
+    if quote != "$":
+        return None
+    match = DOLLAR_QUOTE_RE.match(sql, start)
+    if match is None:
+        return None
+    end = sql.find(match.group(), match.end())
+    if end == -1:
+        raise SchemaParseError(
+            f"unterminated {match.group()} quoted text starting at {sql[start:start + 40]!r}"
+        )
+    return end + len(match.group())
+
+
+def _block_comment_end(sql: str, start: int) -> int:
+    """ブロックコメントの終端の次の位置を返します。
+
+    Args:
+        sql: 走査対象の SQL。
+        start: `/*` の位置。
+
+    Returns:
+        入れ子を含めてコメントを閉じた直後の位置。
+
+    Raises:
+        SchemaParseError: コメントが閉じられないまま SQL が終わる場合。
+    """
+    depth = 1
+    i = start + 2
+    while i < len(sql):
+        if sql.startswith("/*", i):
+            depth += 1
+            i += 2
+        elif sql.startswith("*/", i):
+            depth -= 1
+            i += 2
+            if depth == 0:
+                return i
+        else:
+            i += 1
+    raise SchemaParseError(
+        f"unterminated block comment starting at {sql[start:start + 40]!r}"
+    )
+
+
+def _strip_comments(sql: str) -> str:
+    """SQL からコメントを取り除きます。
+
+    Args:
+        sql: 対象の SQL。
+
+    Returns:
+        行コメントとブロックコメントを空白 1 文字に置き換えた SQL。引用領域の内側は
+        コメントとみなさない。
+
+    Raises:
+        SchemaParseError: 引用またはブロックコメントが閉じられない場合。
+    """
+    kept: list[str] = []
+    i = 0
+    while i < len(sql):
+        quoted_end = _quoted_region_end(sql, i)
+        if quoted_end is not None:
+            kept.append(sql[i:quoted_end])
+            i = quoted_end
+        elif sql.startswith("--", i):
+            newline = sql.find("\n", i)
+            kept.append(" ")
+            i = len(sql) if newline == -1 else newline
+        elif sql.startswith("/*", i):
+            kept.append(" ")
+            i = _block_comment_end(sql, i)
+        else:
+            kept.append(sql[i])
+            i += 1
+    return "".join(kept)
+
+
+def _matching_paren(sql: str, start: int) -> int:
+    """開き括弧に対応する閉じ括弧の位置を返します。
+
+    Args:
+        sql: 走査対象の SQL。
+        start: 開き括弧の次の位置。
+
+    Returns:
+        対応する閉じ括弧の位置。
+
+    Raises:
+        SchemaParseError: 括弧が閉じられないまま SQL が終わる場合。
+    """
+    depth = 1
+    i = start
+    while i < len(sql):
+        quoted_end = _quoted_region_end(sql, i)
+        if quoted_end is not None:
+            i = quoted_end
+            continue
+        if sql[i] == "(":
+            depth += 1
+        elif sql[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    raise SchemaParseError(
+        f"unbalanced parentheses in the column list starting at {sql[start:start + 40]!r}. "
+        "A definition that does not close would drop its columns from the "
+        "destructive-change check."
+    )
+
+
+def _find_table_definitions(sql: str) -> list[tuple[str, str]]:
+    """カラム定義を伴う CREATE TABLE を取り出します。
+
+    Args:
+        sql: コメントを除去済みの SQL。
+
+    Returns:
+        (テーブル名, 括弧内の本体テキスト) を出現順に並べたもの。引用領域の内側は
+        走査しない。
+
+    Raises:
+        SchemaParseError: 引用または括弧が閉じられない場合。
+    """
+    definitions: list[tuple[str, str]] = []
+    i = 0
+    while i < len(sql):
+        quoted_end = _quoted_region_end(sql, i)
+        if quoted_end is not None:
+            i = quoted_end
+            continue
+        match = TABLE_HEADER_RE.match(sql, i)
+        if match is None:
+            i += 1
+            continue
+        body_end = _matching_paren(sql, match.end())
+        definitions.append((match.group(1), sql[match.end():body_end]))
+        i = body_end + 1
+    return definitions
+
+
+def _count_create_table_statements(sql: str) -> int:
+    """CREATE TABLE の出現数を数えます。
+
+    Args:
+        sql: コメントを除去済みの SQL。
+
+    Returns:
+        引用領域の外に現れる CREATE TABLE の個数。
+
+    Raises:
+        SchemaParseError: 引用が閉じられない場合。
+    """
+    count = 0
+    i = 0
+    while i < len(sql):
+        quoted_end = _quoted_region_end(sql, i)
+        if quoted_end is not None:
+            i = quoted_end
+            continue
+        match = CREATE_TABLE_KEYWORD_RE.match(sql, i)
+        if match is None:
+            i += 1
+            continue
+        count += 1
+        i = match.end()
+    return count
+
+
+def _split_top_level(body: str) -> list[str]:
+    """CREATE TABLE 本体を最上位のカンマで分割します。
 
     Args:
         body: CREATE TABLE の括弧内の本体テキスト。
 
     Returns:
+        カラム定義と表制約の並び。括弧の内側と引用領域の内側のカンマでは分割しない。
+
+    Raises:
+        SchemaParseError: 引用が閉じられない場合。
+    """
+    items: list[str] = []
+    depth = 0
+    start = 0
+    i = 0
+    while i < len(body):
+        quoted_end = _quoted_region_end(body, i)
+        if quoted_end is not None:
+            i = quoted_end
+            continue
+        if body[i] == "(":
+            depth += 1
+        elif body[i] == ")":
+            depth -= 1
+        elif body[i] == "," and depth == 0:
+            items.append(body[start:i])
+            start = i + 1
+        i += 1
+    items.append(body[start:])
+    return items
+
+
+def _extract_columns(body: str, table_name: str) -> set[str]:
+    """CREATE TABLE 本体からカラム名を抽出します。
+
+    Args:
+        body: CREATE TABLE の括弧内の本体テキスト。
+        table_name: エラーメッセージに添えるテーブル名。
+
+    Returns:
         正規化済みのカラム名集合。
+
+    Raises:
+        SchemaParseError: カラム名にも表制約にも分類できない要素がある場合、または
+            カラムを 1 つも抽出できなかった場合。
     """
     columns: set[str] = set()
-    for line in body.split(","):
-        line = line.strip()
-        if not line:
+    for item in _split_top_level(body):
+        tokens = item.split()
+        if not tokens:
             continue
-        first_token = line.split()[0] if line.split() else ""
-        ident = first_token.strip('"')
-        if ident.upper() in CONSTRAINT_KEYWORDS:
+        first_token = tokens[0]
+        if first_token.upper() in CONSTRAINT_KEYWORDS:
             continue
-        if re.match(r"^\"?\w+\"?$", first_token):
-            # PostgreSQL は引用符なし識別子を小文字へ畳み、引用符付きは大小を保持する。
-            columns.add(ident if first_token.startswith('"') else ident.lower())
+        if not COLUMN_IDENTIFIER_RE.match(first_token):
+            raise SchemaParseError(
+                f"table {table_name!r} has an element starting with {first_token!r}, "
+                "which is neither a column name nor a table constraint. Columns hidden "
+                "behind an unrecognized element would be silently excluded from the "
+                "destructive-change check."
+            )
+        # PostgreSQL は引用符なし識別子を小文字へ畳み、引用符付きは大小を保持する。
+        columns.add(first_token.strip('"') if first_token.startswith('"') else first_token.lower())
+
+    # 全カラムを取りこぼしたテーブルは、カラムを持たないテーブルと区別が付かない。
+    # そのまま通すと全カラムの削除が破壊的変更として警告されないため中断する
+    if not columns:
+        raise SchemaParseError(
+            f"table {table_name!r} yielded no columns. Dropping every column of a "
+            "table parsed as column-less would go unreported."
+        )
     return columns
 
 
@@ -66,16 +315,22 @@ def parse_schema(union_sql: str) -> dict[str, set[str]]:
         `<所有サービス>.<テーブル名>` をキーとし、カラム名集合を値とするマップ。
 
     Raises:
-        SchemaParseError: SQL 中の CREATE TABLE に解析できないものがある場合。
+        SchemaParseError: SQL 中の CREATE TABLE に解析できないものがある場合、または
+            カラムを読み取れない CREATE TABLE がある場合。
         TableAttributionError: 所有サービスを特定できない、または同じ所有サービスで
             テーブル名が重複する場合。
     """
     tables: dict[str, set[str]] = {}
     parsed_count = 0
+    declared_count = 0
     for owner, section in split_by_source(union_sql):
-        for match in TABLE_DEFINITION_RE.finditer(section):
+        # 行末コメントはカラム定義の区切りを跨ぐため、解析の前に取り除く。サービス区分の
+        # 見出しもコメントなので、除去は split_by_source より後でなければならない
+        statements = _strip_comments(section)
+        declared_count += _count_create_table_statements(statements)
+        for name, body in _find_table_definitions(statements):
             parsed_count += 1
-            qualified = match.group(1).lower()
+            qualified = name.lower()
             # DDL 側の schema 修飾はサービスごとに書き方が揺れるため、修飾を外して
             # 所有サービスで付け直す
             table_name = qualified.split(".", 1)[1] if "." in qualified else qualified
@@ -92,11 +347,10 @@ def parse_schema(union_sql: str) -> dict[str, set[str]]:
                     "hide the other, and columns dropped from the hidden one would go "
                     "unreported."
                 )
-            tables[key] = _extract_columns(match.group(2))
+            tables[key] = _extract_columns(body, key)
 
     # 解析できない CREATE TABLE を 0 件と同一視すると、そのテーブルの削除が
     # 破壊的変更として警告されないまま適用されるため、件数の食い違いで中断する
-    declared_count = len(CREATE_TABLE_KEYWORD_RE.findall(union_sql))
     if parsed_count != declared_count:
         raise SchemaParseError(
             f"{declared_count} CREATE TABLE statement(s) present but only "
@@ -110,7 +364,8 @@ def _parse_schema_file(path: str) -> dict[str, set[str]]:
     """スキーマファイルを読み込んでパースします。
 
     Raises:
-        SchemaParseError: 解析できない CREATE TABLE がある場合。どのファイルかを併記する。
+        SchemaParseError: 解析できない CREATE TABLE、またはカラムを読み取れない
+            CREATE TABLE がある場合。どのファイルかを併記する。
         TableAttributionError: テーブルを所有サービスに対応付けられない場合。
             どのファイルかを併記する。
     """
@@ -128,7 +383,8 @@ def check(old_path: str, new_path: str) -> list[str]:
     """新旧スキーマを比較し、破壊的変更の警告リストを返します。
 
     Raises:
-        SchemaParseError: いずれかのスキーマに解析できない CREATE TABLE がある場合。
+        SchemaParseError: いずれかのスキーマに解析できない CREATE TABLE、または
+            カラムを読み取れない CREATE TABLE がある場合。
         TableAttributionError: いずれかのスキーマでテーブルを所有サービスに
             対応付けられない場合。
     """
@@ -161,7 +417,7 @@ def main() -> None:
     except SchemaParseError as e:
         print(f"⚠ Schema safety check: cannot parse schema: {e}")
         print()
-        print("The destructive-change check cannot cover tables it failed to parse.")
+        print("The destructive-change check cannot cover tables and columns it failed to parse.")
         print("Extend db-migrate/schema_check.py to handle the DDL form above.")
         sys.exit(EXIT_UNCHECKABLE)
     except TableAttributionError as e:
