@@ -126,7 +126,7 @@ gcloud artifacts docker images delete \
 
 3. `gh workflow run db-migrate.yaml -f environment=dev -f bootstrap_baseline=true` を実行し、適用した union を最初の比較元として記録し直す
 
-この手順は記録を消して作り直すだけで、DB には触れない。3 の実行は破壊的変更チェックを行わないので、直前に dry_run で適用内容を確認する。
+1 と 2 は記録を消すだけで DB には触れない。3 は破壊的変更チェックを行わずに適用するので、1 で取り出した union と、これから適用する union の差分を確認してから実行する。
 
 ## トリガー
 
