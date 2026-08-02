@@ -120,10 +120,7 @@ jobs:
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
 
-      - name: Fetch schema union applied to this environment
-        run: db-migrate/fetch-applied-union.sh
-
-      - name: Schema safety check
+      - name: Schema safety check against the union applied to this environment
         env:
           BOOTSTRAP_BASELINE: ${{ steps.params.outputs.bootstrap_baseline }}
         run: .github/scripts/db-migrate/check-schema-safety.sh

@@ -667,7 +667,7 @@ class Test比較元が未記録のときの扱い:
     def test_比較元が無く初回と申告したときexit0で検査していない旨を出力する(self, monkeypatch, tmp_path, capsys):
         missing = str(tmp_path / "not-recorded.sql")
         new = _write_union(tmp_path, "new.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
-        monkeypatch.setattr("sys.argv", ["schema_check", "--allow-missing-baseline", missing, new])
+        monkeypatch.setattr("sys.argv", ["schema_check", "--bootstrap-baseline", missing, new])
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 0
@@ -678,7 +678,7 @@ class Test比較元が未記録のときの扱い:
             tmp_path, "old.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY, email TEXT);")
         )
         new = _write_union(tmp_path, "new.sql", ("account", "CREATE TABLE account.users (id SERIAL PRIMARY KEY);"))
-        monkeypatch.setattr("sys.argv", ["schema_check", "--allow-missing-baseline", old, new])
+        monkeypatch.setattr("sys.argv", ["schema_check", "--bootstrap-baseline", old, new])
         with pytest.raises(SystemExit) as exc:
             main()
         assert exc.value.code == 2

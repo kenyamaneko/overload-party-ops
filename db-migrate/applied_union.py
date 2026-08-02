@@ -92,6 +92,7 @@ def fetch_applied_union(
     environment: str,
     out_path: str,
     *,
+    bootstrap_baseline: bool = False,
     run: Runner = run_command,
 ) -> bool:
     """環境に適用済みの union を取り出します。
@@ -99,13 +100,15 @@ def fetch_applied_union(
     Args:
         out_path: 取り出した union の書き出し先。まだ記録が無いときは、前回の残りを
             比較元と取り違えないよう既存のファイルを消したうえで作成しない。
+        bootstrap_baseline: この実行がその環境への初回適用として申告されているか。
+            申告があるときは、記録の有無を判別できない失敗も記録なしとして扱う。
 
     Returns:
-        記録があり取り出せたとき True、まだ記録が無いとき False。
+        記録があり取り出せたとき True、記録が無いとき False。
 
     Raises:
-        ImageCommandError: 記録の有無を判別できないまま取得に失敗した場合、または
-            取り出しに失敗した場合。
+        ImageCommandError: 初回適用の申告が無いまま記録の有無を判別できずに取得へ
+            失敗した場合、または取り出しに失敗した場合。
     """
     Path(out_path).unlink(missing_ok=True)
     ref = applied_image_ref(image_base, environment)
@@ -114,6 +117,12 @@ def fetch_applied_union(
     result = run(pull)
     if result.returncode != 0:
         if _is_absent(result):
+            return False
+        # レジストリの答えを判別できないまま中断すると、記録がまだ無い環境では
+        # 初回適用そのものが実行できなくなる
+        if bootstrap_baseline:
+            print(f"==> treating {environment} as not recorded (declared as the first apply): "
+                  f"{_describe(pull, result)}")
             return False
         raise ImageCommandError(_describe(pull, result))
 
@@ -146,7 +155,13 @@ def record_applied_union(
 
 def _run_fetch(args: argparse.Namespace) -> None:
     """取り出しの副コマンドを実行します。"""
-    if fetch_applied_union(args.image_base, args.environment, args.out):
+    found = fetch_applied_union(
+        args.image_base,
+        args.environment,
+        args.out,
+        bootstrap_baseline=args.bootstrap_baseline,
+    )
+    if found:
         print(f"==> fetched the schema union applied to {args.environment}")
     else:
         print(f"==> no schema union recorded for {args.environment} yet")
@@ -167,6 +182,11 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--image-base", required=True)
     fetch.add_argument("--environment", required=True)
     fetch.add_argument("--out", required=True)
+    fetch.add_argument(
+        "--bootstrap-baseline",
+        action="store_true",
+        help="その環境への初回適用として、記録の有無を判別できない失敗も記録なしとして扱う",
+    )
     fetch.set_defaults(handler=_run_fetch)
 
     record = subcommands.add_parser("record", help="適用した union を環境の記録として保存する")

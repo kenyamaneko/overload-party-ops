@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #
-# 適用済みの union とこれから適用する union を比較し、破壊的変更を検出する。
+# 対象環境に適用済みの union を比較元として取り出し、これから適用する union と比較して
+# 破壊的変更を検出する。取り出しと比較で初回適用の申告が食い違わないよう 1 つにまとめる。
 #
 # BOOTSTRAP_BASELINE=true は、その環境にまだ適用済み union が記録されていないことを
 # 承知の上で、比較せずに初回適用することを許可する。
 #
 # 必要な環境変数:
 #   BOOTSTRAP_BASELINE - true / false
-#   BASELINE_UNION     - 適用済み union のパス (未記録なら存在しない)
+#   BASELINE_UNION     - 比較元の書き出し先 (未記録なら作られない)
 #   CANDIDATE_UNION    - これから適用する union のパス
 set -euo pipefail
 
@@ -16,12 +17,17 @@ set -euo pipefail
 : "${CANDIDATE_UNION:?CANDIDATE_UNION is required}"
 
 case "$BOOTSTRAP_BASELINE" in
-  true)  allow_missing="--allow-missing-baseline" ;;
-  false) allow_missing="" ;;
+  true)  bootstrap_option="--bootstrap-baseline" ;;
+  false) bootstrap_option="" ;;
   *)
     echo "check-schema-safety: BOOTSTRAP_BASELINE must be true or false (got '$BOOTSTRAP_BASELINE')" >&2
     exit 1
     ;;
 esac
 
-python3 db-migrate/schema_check.py ${allow_missing:+"$allow_missing"} "$BASELINE_UNION" "$CANDIDATE_UNION"
+db-migrate/fetch-applied-union.sh ${bootstrap_option:+"$bootstrap_option"}
+
+python3 db-migrate/schema_check.py \
+  ${bootstrap_option:+"$bootstrap_option"} \
+  "$BASELINE_UNION" \
+  "$CANDIDATE_UNION"

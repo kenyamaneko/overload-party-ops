@@ -111,6 +111,27 @@ class Test適用済みunionの取り出し:
         with pytest.raises(ImageCommandError, match="denied"):
             fetch_applied_union(IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), run=docker)
 
+    def test_初回適用と申告したとき記録の有無を判別できない失敗も記録なしとして扱う(self, tmp_path, capsys):
+        docker = FakeDocker(failures={"pull": DENIED_PULL})
+
+        found = fetch_applied_union(
+            IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), bootstrap_baseline=True, run=docker
+        )
+
+        assert found is False
+        assert "declared as the first apply" in capsys.readouterr().out
+
+    def test_初回適用と申告しても記録があれば取り出す(self, tmp_path):
+        docker = FakeDocker(stored_union="CREATE TABLE account.users (id UUID);")
+        out = tmp_path / "baseline.sql"
+
+        found = fetch_applied_union(
+            IMAGE_BASE, "dev", str(out), bootstrap_baseline=True, run=docker
+        )
+
+        assert found is True
+        assert out.read_text() == "CREATE TABLE account.users (id UUID);"
+
     def test_取得できても取り出しに失敗したとき中断する(self, tmp_path):
         docker = FakeDocker(failures={"cp": CommandResult(1, "", "no such file or directory")})
 

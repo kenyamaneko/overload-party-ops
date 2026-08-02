@@ -451,17 +451,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("baseline", help="環境に適用済みの union。未記録なら存在しなくてよい")
     parser.add_argument("candidate", help="これから適用する union")
     parser.add_argument(
-        "--allow-missing-baseline",
+        "--bootstrap-baseline",
         action="store_true",
         help="適用済み union が未記録の環境で、比較せずに初回適用することを許可する",
     )
     return parser.parse_args()
 
 
-def _exit_on_baseline_availability(baseline_path: str, allow_missing: bool) -> None:
-    """比較元の有無と初回の申告が食い違うとき、比較へ進まず終了します。"""
+def _exit_on_baseline_availability(baseline_path: str, bootstrap_baseline: bool) -> None:
+    """比較元の有無と初回適用の申告が食い違うとき、比較へ進まず終了します。"""
     if not os.path.exists(baseline_path):
-        if not allow_missing:
+        if not bootstrap_baseline:
             print("⚠ Schema safety check: no schema union has been recorded as applied yet.")
             print()
             print("Nothing can be compared, so destructive changes would go undetected.")
@@ -471,7 +471,7 @@ def _exit_on_baseline_availability(baseline_path: str, allow_missing: bool) -> N
         print("Schema safety check: NOT PERFORMED (first apply for this environment)")
         sys.exit(EXIT_SAFE)
 
-    if allow_missing:
+    if bootstrap_baseline:
         print("⚠ Schema safety check: a schema union is already recorded for this environment.")
         print()
         print("bootstrap_baseline only covers the first apply. Re-run without it so that")
@@ -482,7 +482,7 @@ def _exit_on_baseline_availability(baseline_path: str, allow_missing: bool) -> N
 def main() -> None:
     """スキーマ安全性チェックのメインエントリーポイントです。"""
     args = _parse_args()
-    _exit_on_baseline_availability(args.baseline, args.allow_missing_baseline)
+    _exit_on_baseline_availability(args.baseline, args.bootstrap_baseline)
 
     try:
         warnings = check(args.baseline, args.candidate)
