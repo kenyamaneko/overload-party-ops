@@ -8,8 +8,18 @@ from conftest import build_union
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINT = REPO_ROOT / ".github" / "scripts" / "db-migrate" / "check-schema-safety.sh"
 
+APPLIED_REF = "registry.example.com/example-project/example-repo/db-migrate-applied-dev:latest"
+
 ABSENT_PULL_MESSAGE = 'manifest unknown: Failed to fetch "latest"'
+ABSENT_REFERENCE_PULL_MESSAGE = (
+    f'Error response from daemon: failed to resolve reference "{APPLIED_REF}": '
+    f"{APPLIED_REF}: not found"
+)
 UNREACHABLE_PULL_MESSAGE = "failed to do request: dial tcp: connect: connection refused"
+CREDENTIAL_HELPER_PULL_MESSAGE = (
+    'error getting credentials - err: exec: "docker-credential-desktop": executable file '
+    "not found in $PATH, out: ``"
+)
 
 
 def _install_failing_docker(tmp_path, message: str) -> Path:
@@ -25,7 +35,8 @@ def _install_failing_docker(tmp_path, message: str) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     docker = bin_dir / "docker"
-    docker.write_text(f'#!/usr/bin/env bash\necho "{message}" >&2\nexit 1\n')
+    # docker の文言には $PATH やバッククォートが現れるため、展開されない引用形式で埋め込む
+    docker.write_text(f"#!/usr/bin/env bash\ncat >&2 <<'EOF'\n{message}\nEOF\nexit 1\n")
     docker.chmod(0o755)
     return bin_dir
 
@@ -67,8 +78,25 @@ class Testスキーマ安全チェックの実行:
         assert result.returncode != 0
         assert "connection refused" in result.stdout + result.stderr
 
+    def test_資格情報ヘルパを起動できない失敗のとき初回適用として実行しても中断する(self, tmp_path):
+        result = _run_check(
+            tmp_path, bootstrap_baseline="true", pull_message=CREDENTIAL_HELPER_PULL_MESSAGE
+        )
+
+        assert result.returncode != 0
+        assert "docker-credential-desktop" in result.stdout + result.stderr
+
     def test_記録がまだ無いとき初回適用として実行すると検査せずに通る(self, tmp_path):
         result = _run_check(tmp_path, bootstrap_baseline="true", pull_message=ABSENT_PULL_MESSAGE)
+
+        assert result.returncode == 0
+        assert "NOT PERFORMED" in result.stdout
+        assert "holds 1 table(s)" in result.stdout
+
+    def test_参照そのものが無いと答えられたとき初回適用として実行すると検査せずに通る(self, tmp_path):
+        result = _run_check(
+            tmp_path, bootstrap_baseline="true", pull_message=ABSENT_REFERENCE_PULL_MESSAGE
+        )
 
         assert result.returncode == 0
         assert "NOT PERFORMED" in result.stdout

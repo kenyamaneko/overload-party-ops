@@ -17,12 +17,32 @@ DOCKERFILE = "db-migrate/applied-union.Dockerfile"
 CONTEXT_DIR = "db-migrate/sql"
 CONTAINER_ID = "0123456789ab"
 
+DEV_REF = f"{IMAGE_BASE}-applied-dev:latest"
+
 ABSENT_PULL = CommandResult(
     1, "", 'Error response from daemon: manifest unknown: Failed to fetch "latest"'
+)
+ABSENT_REFERENCE_PULL = CommandResult(
+    1,
+    "",
+    f'Error response from daemon: failed to resolve reference "{DEV_REF}": {DEV_REF}: not found',
 )
 DENIED_PULL = CommandResult(1, "", "Error response from daemon: denied: Permission denied")
 UNREACHABLE_PULL = CommandResult(
     1, "", "Error response from daemon: failed to do request: dial tcp: connect: connection refused"
+)
+UNREACHABLE_REFERENCE_PULL = CommandResult(
+    1,
+    "",
+    f'Error response from daemon: failed to resolve reference "{DEV_REF}": failed to do request: '
+    'Head "https://example-registry/v2/example-project/example-repo/db-migrate-applied-dev'
+    '/manifests/latest": dial tcp: connect: connection refused',
+)
+CREDENTIAL_HELPER_PULL = CommandResult(
+    1,
+    "",
+    'error getting credentials - err: exec: "docker-credential-desktop": executable file '
+    "not found in $PATH, out: ``",
 )
 
 
@@ -111,6 +131,25 @@ class Test適用済みunionの取り出し:
         fetch_applied_union(IMAGE_BASE, "dev", str(out), run=docker)
 
         assert not out.exists()
+
+    def test_参照そのものが無いと答えられたとき記録なしとして判定する(self, tmp_path):
+        docker = FakeDocker(failures={"pull": ABSENT_REFERENCE_PULL})
+
+        found = fetch_applied_union(IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), run=docker)
+
+        assert found is False
+
+    def test_資格情報ヘルパを起動できないとき記録なしと扱わずに中断する(self, tmp_path):
+        docker = FakeDocker(failures={"pull": CREDENTIAL_HELPER_PULL})
+
+        with pytest.raises(ImageCommandError, match="docker-credential-desktop"):
+            fetch_applied_union(IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), run=docker)
+
+    def test_参照名を挙げた通信断のとき記録なしと扱わずに中断する(self, tmp_path):
+        docker = FakeDocker(failures={"pull": UNREACHABLE_REFERENCE_PULL})
+
+        with pytest.raises(ImageCommandError, match="connection refused"):
+            fetch_applied_union(IMAGE_BASE, "dev", str(tmp_path / "baseline.sql"), run=docker)
 
     def test_権限が無くて取得できないとき記録なしと扱わずに中断する(self, tmp_path):
         docker = FakeDocker(failures={"pull": DENIED_PULL})

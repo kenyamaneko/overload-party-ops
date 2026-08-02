@@ -551,8 +551,8 @@ def main() -> None:
     for w in warnings:
         print(f"  - {w}")
     print()
-    print("If intentional, re-run the manual workflow with dry_run=true to preview,")
-    print("then confirm the changes are safe before applying.")
+    print("Every apply is checked against the recorded union, so an intentional drop needs")
+    print("that record replaced first. The procedure is described in db-migrate/README.md.")
     sys.exit(EXIT_DESTRUCTIVE)
 
 

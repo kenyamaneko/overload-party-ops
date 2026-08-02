@@ -19,16 +19,19 @@ UNION_PATH_IN_IMAGE = "/schema_union.sql"
 # 取り出しのためだけに作るコンテナへ形ばかりの命令を渡す
 EXTRACT_PLACEHOLDER_COMMAND = UNION_PATH_IN_IMAGE
 
-# レジストリが「その参照は無い」と答えたことを示す語。認証失敗 (denied / unauthorized) や
-# 通信断 (no such host / connection refused) と取り違えないために、存在しないと答えたときの
-# 文言だけを並べる。docker のバージョンで文言が変わるため複数を持つ。
+# レジストリが「その参照は無い」と答えたことを示すエラーコード。認証失敗 (denied /
+# unauthorized) や通信断 (no such host / connection refused) と取り違えないために、
+# 存在しないと答えたときの語だけを並べる。docker のバージョンで表記が変わるため複数を持つ。
 ABSENT_IMAGE_MARKERS = (
     "manifest unknown",
     "manifest_unknown",
     "name unknown",
     "name_unknown",
-    "not found",
 )
+
+# 資格情報ヘルパを起動できない失敗など、参照と無関係な事象も "not found" を含むため、
+# 参照名に接着した形だけを不在の答えとみなす。
+ABSENT_REFERENCE_SUFFIX = ": not found"
 
 
 @dataclass(frozen=True)
@@ -81,10 +84,20 @@ def _run_checked(run: Runner, command: list[str]) -> str:
     return result.stdout.strip()
 
 
-def _is_absent(result: CommandResult) -> bool:
-    """取得の失敗が、まだ記録が無いことによるものかを判定します。"""
+def _is_absent(result: CommandResult, ref: str) -> bool:
+    """取得の失敗が、まだ記録が無いことによるものかを判定します。
+
+    Args:
+        result: 取得コマンドの実行結果。
+        ref: 取得しようとしたイメージの参照。
+
+    Returns:
+        レジストリがその参照は無いと答えたときだけ True。判別できない失敗は False。
+    """
     output = (result.stderr + result.stdout).lower()
-    return any(marker in output for marker in ABSENT_IMAGE_MARKERS)
+    if any(marker in output for marker in ABSENT_IMAGE_MARKERS):
+        return True
+    return f"{ref.lower()}{ABSENT_REFERENCE_SUFFIX}" in output
 
 
 def _extract_union(run: Runner, ref: str, out_path: str) -> None:
@@ -134,7 +147,7 @@ def fetch_applied_union(
     pull = ["docker", "pull", ref]
     result = run(pull)
     if result.returncode != 0:
-        if _is_absent(result):
+        if _is_absent(result, ref):
             return False
         raise ImageCommandError(_describe(pull, result))
 
