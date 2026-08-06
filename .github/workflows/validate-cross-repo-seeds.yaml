@@ -18,7 +18,7 @@ permissions:
 jobs:
   changes:
     if: github.event_name == 'pull_request'
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       code: ${{ steps.detect.outputs.changed }}
@@ -37,7 +37,7 @@ jobs:
   validate:
     needs: [changes]
     if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true')
-    runs-on: ubicloud-standard-2
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout ops
