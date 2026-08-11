@@ -71,3 +71,4 @@ Terraform 外から書き換えるため、差分が出るのは日常運用。p
 | Secret | `CLOUDFLARE_CDN_API_TOKEN` | Cloudflare 環境の plan 用 API トークン |
 | Variable | `UPSTASH_EMAIL` | Upstash 環境の plan 用アカウントメール |
 | Secret | `UPSTASH_API_KEY` | Upstash 環境の plan 用 API キー |
+| Variable | `ALERT_EMAIL` | google-cloud/env の各環境の plan 用アラート通知先メールアドレス |
