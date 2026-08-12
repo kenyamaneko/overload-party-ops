@@ -4,6 +4,14 @@ Overload Party の運用ジョブ・サービスをまとめたリポジトリ�
 
 各ジョブ・サービスのセットアップや設定は個別の README を参照。
 
+## 技術スタック
+
+| レイヤー | 技術 |
+|---|---|
+| 言語 | Python |
+| 実行基盤 | GitHub Actions (定時実行) / Cloud Run Job |
+| 通知 | Slack |
+
 ## 定時実行ジョブ（GitHub Actions schedule）
 
 | ジョブ | 説明 | スケジュール |
