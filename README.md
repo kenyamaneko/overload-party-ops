@@ -10,7 +10,6 @@ Overload Party の運用ジョブ・サービスをまとめたリポジトリ�
 |---|---|
 | 言語 | Python, シェルスクリプト |
 | DBマイグレーション | sqldef |
-| 実行基盤 | GitHub Actions (定時実行) / Cloud Run Job (db-migrate) |
 | 通知 | Slack |
 
 ## 定時実行ジョブ（GitHub Actions schedule）
