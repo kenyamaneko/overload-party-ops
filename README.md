@@ -1,6 +1,6 @@
 # overload-party-ops
 
-Overload Party の運用ジョブ・サービスをまとめたリポジトリ。GitHub Actions の定時実行と CD パイプラインを集約する。
+カードゲーム Overload Party の運用ジョブ・CD パイプラインを担うリポジトリ。
 
 各ジョブ・サービスのセットアップや設定は個別の README を参照。
 
@@ -25,14 +25,12 @@ Overload Party の運用ジョブ・サービスをまとめたリポジトリ�
 
 | 名前 | 説明 | トリガー |
 |---|---|---|
-| [db-migrate](db-migrate/README.md) | Cloud SQL スキーママイグレーション（Cloud Run Job） | service repo main push（dev 自動）/ 手動 dispatch |
+| [db-migrate](db-migrate/README.md) | Cloud SQL スキーママイグレーション | service repo main push（dev 自動）/ 手動 dispatch |
 
-## ローカル開発
+## ドキュメント
 
-Cloud Run 系サービスは Makefile でビルド・デプロイする。
-
-```bash
-make build-db-migrate               # db-migrate イメージのビルド
-make deploy-db-migrate              # ビルド + AR push + Cloud Run Job 更新
-make help                           # コマンド一覧
-```
+| ドキュメント | 内容 |
+|---|---|
+| [セットアップ](docs/SETUP.md) | ローカル開発のビルド・デプロイコマンド |
+| [ADR](https://github.com/kenyamaneko/overload-party-common/tree/main/docs/adr)（commonリポジトリ） | 設計判断の背景・理由・結果 |
+| [システム構成図](https://github.com/kenyamaneko/overload-party-common#システム構成図)（commonリポジトリ） | Overload Party 全体の構成図 |
