@@ -8,7 +8,8 @@ Overload Party の運用ジョブ・サービスをまとめたリポジトリ�
 
 | レイヤー | 技術 |
 |---|---|
-| 言語 | Python (定時ジョブ), Bash (db-migrate 実行時。psqldef を使用) |
+| 言語 | Python, シェルスクリプト |
+| DBマイグレーション | sqldef |
 | 実行基盤 | GitHub Actions (定時実行) / Cloud Run Job (db-migrate) |
 | 通知 | Slack |
 
