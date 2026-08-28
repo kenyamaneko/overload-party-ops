@@ -66,10 +66,6 @@ class Testgame_config初期値の読み取り:
 
 
 class Testlock経由の取得:
-    """subprocess は外部境界としてダブル化する。checkout 相当のコマンド実行時に
-    workdir 配下へ期待ファイルを書く fake で、以降のファイル存在チェック分岐を通す。
-    """
-
     def _write_lock_yaml(self, tmp_path: Path, text: str) -> Path:
         """lock YAML 文字列を一時ファイルに書き出してパスを返す。
 
@@ -215,8 +211,6 @@ class Testlock経由の取得:
 
 
 class TestFirestoreへの投入:
-    """Firestore SDK は外部境界なので set() に渡るペイロードを直接観測してよい。"""
-
     def _build_fake_firestore_client(self, exists_by_key: dict[str, bool]):
         """firestore.Client の fake クラスを作る。
 

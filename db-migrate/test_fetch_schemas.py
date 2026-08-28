@@ -17,10 +17,6 @@ _spec.loader.exec_module(fetch_schemas)
 
 
 class Testスキーマ名検証:
-    """schemas.lock.yaml から取得したスキーマ名がファイルパスや SQL に到達する前の
-    多重防御の核。パストラバーサル・シェルメタ文字を確実に弾くことを保証する。
-    """
-
     @pytest.mark.parametrize(
         "schema_name",
         [
@@ -50,10 +46,6 @@ class Testスキーマ名検証:
 
 
 class Test単一ファイルのsparse_clone:
-    """subprocess は外部境界としてダブル化する。checkout 成功を模す fake は dest 配下に
-    ファイルを書き、以降のファイル存在チェック分岐を実データで通す。
-    """
-
     def _fake_checkout_writes_file(self, file_path: str):
         """checkout コマンド実行時に dest 配下へ期待ファイルを書く _run の fake を返す。
 
@@ -153,10 +145,6 @@ class Test単一ファイルのsparse_clone:
 
 
 class TestユニオンSQLの結合:
-    """union は下流の psqldef が適用するため、実 DB 適用ではなく構成 (バナーと DDL の
-    包含・順序) を検証する。
-    """
-
     def _fake_clone_sparse(self, sql_by_name: dict[str, str]):
         """スキーマ名ごとの SQL 文字列を返す _clone_sparse の fake を作る。
 
