@@ -189,7 +189,7 @@ class Test失敗通知の整形:
         )
         assert "<https://github.com/org/repo/actions/runs/1|GitHub Actions ログ>" in msg
 
-    def test_run_urlが空ならURL行を出さない(self):
+    def test_ローカル実行のときURL行を出さない(self):
         msg = v._format_failure_message([("p", "q")], "2026-06-20", run_url="")
         assert "GitHub Actions ログ" not in msg
 
@@ -243,7 +243,6 @@ class TestCLIの終了コードとSlack通知:
         assert "faction_set_ghost" in msg
 
     def test_SLACK_WEBHOOK_URL未設定は通知経路が無い異常としてexit1で落とす(self, tmp_path: Path, capsys, monkeypatch):
-        # 他 Slack ジョブと同じく、通知経路の欠如は silent skip せず exit 1 で落とす。
         shop, card = self._write_pair(
             tmp_path,
             [{"product_id": "fs_she", "type": "faction_set", "card_pack_id": "faction_set_she"}],
