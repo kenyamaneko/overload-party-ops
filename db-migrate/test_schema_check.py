@@ -419,7 +419,6 @@ class Test識別子の畳み込み:
         ],
     )
     def test_引用符付きは大小を保持し引用符なしは小文字へ畳む(self, column_definition, expected):
-        # PostgreSQL の識別子規則: 引用符付きは大小を保持、引用符なしは小文字へ畳む。
         tables = parse_schema(build_union(("account", f"CREATE TABLE t ({column_definition});")))
         assert tables["account.t"] == {expected}
 

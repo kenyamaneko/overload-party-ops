@@ -190,7 +190,6 @@ class Test失敗通知の整形:
         assert "<https://github.com/org/repo/actions/runs/1|GitHub Actions ログ>" in msg
 
     def test_run_urlが空ならURL行を出さない(self):
-        # 空 run_url はローカル実行を意味するため URL 行を出さない。
         msg = v._format_failure_message([("p", "q")], "2026-06-20", run_url="")
         assert "GitHub Actions ログ" not in msg
 

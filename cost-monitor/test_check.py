@@ -54,7 +54,6 @@ class Testリソース未存在の判定:
                 id="quota 超過はリソース未存在としない",
             ),
             pytest.param("", False, id="空 stderr はリソース未存在としない"),
-            # 404 は \b 単語境界を要求するため "4040" 等の数字列に誤爆しない
             pytest.param("status 4040", False, id="404 を含む 4040 は単語境界で誤爆しない"),
         ],
     )
@@ -295,7 +294,6 @@ class Test外部コマンド実行ラッパー:
                 _run_cmd(["fake"], label="test", allow_not_found=True)
 
     def test_allow_not_foundがFalseならNotFound_stderrでも例外にする(self):
-        # 呼び出し側が明示的に許可していない限り、NotFound でも未定義の状態としてエラーで止める。
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr="NOT_FOUND")):
             with pytest.raises(CommandError):
                 _run_cmd(["fake"], label="test", allow_not_found=False)
@@ -409,11 +407,8 @@ class Testエラーヘッダの組み立て:
         assert "<https://github.com/org/repo/actions/runs/12345|ログ>" in header
 
     def test_URL取得不可の時も動線なしを明示して調査起点を与える(self):
-        # silent に URL を省略するとユーザーは「なぜログ無いのか」分からず調査を諦める。
-        # 必ず「取得不可」と理由を載せて問い合わせの起点になる文言にする。
         header = _build_error_header("2026-04-17", "")
         assert "ログ URL 取得不可" in header
-        # ユーザーが見るべき代替動線（stdout）を明示
         assert "stdout" in header
 
     def test_URL有無に関わらず日付とエラーマーカーは常に含まれる(self):

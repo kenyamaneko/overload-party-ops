@@ -146,8 +146,6 @@ class Testplan_JSONのsuppress分離:
         assert suppressed == []
 
     def test_readと同planのトリガresourceはvisibleに残り通知される(self):
-        # ["read"] を skip するだけで、その引き金になっている managed resource の変更を
-        # 握りつぶさないことを保証する。
         plan = _plan_json(
             _resource_change("data.google_sql_database_instance.target", "google_sql_database_instance", ["read"], None, None),
             _resource_change("module.psc_cloudsql.google_project_service.sqladmin", "google_project_service", ["update"], {"disable_on_destroy": True}, {"disable_on_destroy": False}),
@@ -185,7 +183,6 @@ class Testplan_JSONのsuppress分離:
         assert suppressed == []
 
     def test_suppressルールが空なら_prod相当で全てvisible(self):
-        # prod で同じ activation_policy 差分を出しても検知されることを保証する。
         plan = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
@@ -299,7 +296,6 @@ class Testサマリの組み立て:
         assert "他 5 リソース" in summary
 
     def test_リソースが10件ちょうどのとき全件が列挙され集約行は付かない(self):
-        # 10 件超のときだけ集約する境界の下側。
         changes = [
             _resource_change(f"r.{i}", "t", ["create"], None, {})
             for i in range(10)
@@ -309,7 +305,6 @@ class Testサマリの組み立て:
         assert "他" not in summary
 
     def test_リソースが11件のとき先頭10件と他1リソースに集約される(self):
-        # 10 件超のときだけ集約する境界の上側。
         changes = [
             _resource_change(f"r.{i}", "t", ["create"], None, {})
             for i in range(11)
@@ -404,7 +399,6 @@ class Testterraform_planの3段パイプ:
         assert "init failed" in output
 
     def test_init失敗時はplanを叩かない(self):
-        # 無駄な API 呼びを防ぐ。
         with patch("check.run", side_effect=[_proc(1, stderr="init failed")]) as run_mock:
             run_terraform_plan("/work")
         assert run_mock.call_count == 1
@@ -442,7 +436,6 @@ class Testterraform_planの3段パイプ:
         assert "show failed" in output
 
     def test_error時はstderrを優先して詳細に選ぶ(self):
-        # CLI の慣習に合わせ stderr → stdout の順で詳細を選ぶ。
         with patch("check.run", side_effect=[
             _proc(0),
             _proc(1, stdout="stdout content", stderr="stderr detail"),
@@ -477,7 +470,6 @@ class TestSlack通知のtruncate:
         assert len(payload["text"]) < 4000
 
     def test_SLACK_TEXT_LIMITちょうどはtruncateしない(self):
-        # >= ではなく > 条件の境界。
         captured, urlopen = self._capture_payload()
         with patch("check.urllib.request.urlopen", side_effect=urlopen):
             notify_slack("https://webhook", "x" * SLACK_TEXT_LIMIT)
@@ -645,8 +637,6 @@ class Testmainのsuppress適用:
         assert CLOUDSQL not in result["message"]
 
     def test_prod相当でactivation_policy差分があればSlack通知される(self):
-        # prod の意図しない停止を検知するための要件。検知器側で明示的に suppress 対象から
-        # 外れていることを保証する。
         plan_json = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
