@@ -296,32 +296,41 @@ class Testスキーマ取得mainの入口:
             "--workdir", str(tmp_path / "workdir"),
         ]
 
-    @pytest.mark.parametrize(
-        ("cli_token", "env_vars", "expected_token"),
-        [
-            pytest.param(
-                "TST1", {"GITHUB_TOKEN": "TST2"}, "TST1",
-                id="--token 指定があるとき",
-            ),
-            pytest.param(
-                None, {"GITHUB_TOKEN": "TST2", "DB_MIGRATE_TOKEN": "TST3"}, "TST2",
-                id="--token が無く GITHUB_TOKEN があるとき",
-            ),
-            pytest.param(
-                None, {"DB_MIGRATE_TOKEN": "TST3"}, "TST3",
-                id="GITHUB_TOKEN も無いとき",
-            ),
-        ],
-    )
-    def test_token解決の優先順位(self, tmp_path, monkeypatch, cli_token, env_vars, expected_token):
+    def test_token引数を指定したときスキーマ取得に使うトークンになる(self, tmp_path, monkeypatch):
         lock_path = self._write_lock(tmp_path)
         grant_src = tmp_path / "grant_iam.sql"
         grant_src.write_text("GRANT SELECT ON t TO r;")
         out_path = tmp_path / "sql" / "schema_union.sql"
 
         argv = self._base_argv(tmp_path, lock_path, out_path, grant_src)
-        if cli_token is not None:
-            argv += ["--token", cli_token]
+        argv += ["--token", "TST1"]
+        monkeypatch.setattr("sys.argv", argv)
+
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "TST2"}, clear=True), \
+             patch("fetch_schemas.fetch_sources", return_value=[]) as fetch_sources:
+            fetch_schemas.main()
+        assert fetch_sources.call_args.args[2] == "TST1"
+
+    @pytest.mark.parametrize(
+        ("env_vars", "expected_token"),
+        [
+            pytest.param(
+                {"GITHUB_TOKEN": "TST2", "DB_MIGRATE_TOKEN": "TST3"}, "TST2",
+                id="GITHUB_TOKEN と DB_MIGRATE_TOKEN の両方があるとき、GITHUB_TOKEN がスキーマ取得に使うトークンになる",
+            ),
+            pytest.param(
+                {"DB_MIGRATE_TOKEN": "TST3"}, "TST3",
+                id="GITHUB_TOKEN が無いとき、DB_MIGRATE_TOKEN がスキーマ取得に使うトークンになる",
+            ),
+        ],
+    )
+    def test_token引数を指定しないとき環境変数からスキーマ取得に使うトークンを解決する(self, tmp_path, monkeypatch, env_vars, expected_token):
+        lock_path = self._write_lock(tmp_path)
+        grant_src = tmp_path / "grant_iam.sql"
+        grant_src.write_text("GRANT SELECT ON t TO r;")
+        out_path = tmp_path / "sql" / "schema_union.sql"
+
+        argv = self._base_argv(tmp_path, lock_path, out_path, grant_src)
         monkeypatch.setattr("sys.argv", argv)
 
         with patch.dict(os.environ, env_vars, clear=True), \
