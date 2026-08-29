@@ -375,7 +375,7 @@ class TestSlack通知:
 
 
 class Test各チェックのCommandErrorメッセージ:
-    def test_check_cloudsqlのCommandErrorは読めるメッセージをerrorsに積む(self):
+    def test_CloudSQLの稼働チェックはgcloudコマンド失敗時に読めるメッセージをエラーに積む(self):
         with patch("resources.run_gcloud_value", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_cloudsql("proj")
         assert costs == []
@@ -383,14 +383,14 @@ class Test各チェックのCommandErrorメッセージ:
         assert "Cloud SQL" in errors[0]
         assert "gcloud 実行失敗" in errors[0]
 
-    def test_check_static_ipsのCommandErrorは読めるメッセージをerrorsに積む(self):
+    def test_予約済み外部IPのチェックはgcloudコマンド失敗時に読めるメッセージをエラーに積む(self):
         with patch("resources.run_gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_static_ips("proj")
         assert costs == []
         assert len(errors) == 1
         assert "外部 IP" in errors[0]
 
-    def test_check_pscのCommandErrorは読めるメッセージをerrorsに積む(self):
+    def test_PSC転送ルールのチェックはgcloudコマンド失敗時に読めるメッセージをエラーに積む(self):
         with patch("resources.run_gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_psc("proj")
         assert costs == []
