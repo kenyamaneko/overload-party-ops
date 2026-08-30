@@ -48,10 +48,6 @@ ACTIVATION_POLICY_SUPPRESS = [{"type": CLOUDSQL, "attribute": "settings[0].activ
 
 
 class Testinitノイズの除去:
-    """エラー時の Slack 通知に init ログが混ざるとノイズで読みづらくなるため、
-    init の典型メッセージだけ削り、エラー本体は残す。
-    """
-
     def test_Initializing系のボイラープレート行が削られる(self):
         out = (
             "Initializing the backend...\n"
@@ -96,10 +92,6 @@ class Testinitノイズの除去:
 
 
 class Test差分属性パスの列挙:
-    """suppress 判定が属性単位なので、path 表現（dict は `.key`、list は `[i]`）が
-    rule の attribute 表現と一致することを保証する。
-    """
-
     def test_dict配下のスカラ差分はkeyパスで検出される(self):
         paths = _diff_paths({"tier": "old"}, {"tier": "new"})
         assert paths == ["tier"]
@@ -133,10 +125,6 @@ class Test差分属性パスの列挙:
 
 
 class Testplan_JSONのsuppress分離:
-    """dev/stg で活きる: Cloud SQL の activation_policy 差分だけならノイズとして吸収。
-    prod で活きる: suppress rule が無い env では何も抑止しない＝drift として通知。
-    """
-
     def test_no_opのリソースはvisibleにもsuppressedにも積まれない(self):
         plan = _plan_json(
             _resource_change("google_foo.bar", "google_foo", ["no-op"], {}, {}),
@@ -158,8 +146,6 @@ class Testplan_JSONのsuppress分離:
         assert suppressed == []
 
     def test_readと同planのトリガresourceはvisibleに残り通知される(self):
-        # ["read"] を skip するだけで、その引き金になっている managed resource の変更を
-        # 握りつぶさないことを保証する。
         plan = _plan_json(
             _resource_change("data.google_sql_database_instance.target", "google_sql_database_instance", ["read"], None, None),
             _resource_change("module.psc_cloudsql.google_project_service.sqladmin", "google_project_service", ["update"], {"disable_on_destroy": True}, {"disable_on_destroy": False}),
@@ -197,7 +183,6 @@ class Testplan_JSONのsuppress分離:
         assert suppressed == []
 
     def test_suppressルールが空なら_prod相当で全てvisible(self):
-        # prod で同じ activation_policy 差分を出しても検知されることを保証する。
         plan = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
@@ -311,7 +296,6 @@ class Testサマリの組み立て:
         assert "他 5 リソース" in summary
 
     def test_リソースが10件ちょうどのとき全件が列挙され集約行は付かない(self):
-        # 10 件超のときだけ集約する境界の下側。
         changes = [
             _resource_change(f"r.{i}", "t", ["create"], None, {})
             for i in range(10)
@@ -321,7 +305,6 @@ class Testサマリの組み立て:
         assert "他" not in summary
 
     def test_リソースが11件のとき先頭10件と他1リソースに集約される(self):
-        # 10 件超のときだけ集約する境界の上側。
         changes = [
             _resource_change(f"r.{i}", "t", ["create"], None, {})
             for i in range(11)
@@ -349,8 +332,6 @@ class Testサマリの組み立て:
 
 
 class Testtargets_yamlの読み込み:
-    """ファイル不在は silent に [] を返さず例外化する。"""
-
     def test_targets_yamlの内容をlistとしてロードする(self, tmp_path):
         yaml_file = tmp_path / "targets.yaml"
         yaml_file.write_text("- repo: a\n  environments: []\n")
@@ -367,8 +348,6 @@ class Testtargets_yamlの読み込み:
 
 
 class Testリポジトリのclone:
-    """git clone のエラーを stderr に残しつつ None を返して呼び出し側に委譲する。"""
-
     def test_clone成功時はdestパスを返す(self):
         with patch("check.run", return_value=_proc(0)):
             result = clone_repo("repo-x", "token")
@@ -413,10 +392,6 @@ class Testリポジトリのclone:
 
 
 class Testterraform_planの3段パイプ:
-    """-detailed-exitcode の意味: exit 0 = 差分なし / exit 2 = drift / exit その他 = エラー。
-    drift 時だけ show -json で構造化 JSON を取り、上位に渡す。
-    """
-
     def test_init失敗ならplanを実行せず1と詳細を返す(self):
         with patch("check.run", return_value=_proc(1, stderr="init failed")):
             code, output = run_terraform_plan("/work")
@@ -424,7 +399,6 @@ class Testterraform_planの3段パイプ:
         assert "init failed" in output
 
     def test_init失敗時はplanを叩かない(self):
-        # 無駄な API 呼びを防ぐ。
         with patch("check.run", side_effect=[_proc(1, stderr="init failed")]) as run_mock:
             run_terraform_plan("/work")
         assert run_mock.call_count == 1
@@ -462,7 +436,6 @@ class Testterraform_planの3段パイプ:
         assert "show failed" in output
 
     def test_error時はstderrを優先して詳細に選ぶ(self):
-        # CLI の慣習に合わせ stderr → stdout の順で詳細を選ぶ。
         with patch("check.run", side_effect=[
             _proc(0),
             _proc(1, stdout="stdout content", stderr="stderr detail"),
@@ -472,10 +445,6 @@ class Testterraform_planの3段パイプ:
 
 
 class TestSlack通知のtruncate:
-    """Slack API は 4000 chars 超過で通知そのものを失敗させる。ユーザーが何も気付けない
-    silent failure を避けるための truncate 仕様を固定する。
-    """
-
     def _capture_payload(self):
         captured = {}
         def _urlopen(req):
@@ -500,8 +469,7 @@ class TestSlack通知のtruncate:
         assert "…(truncated)" in payload["text"]
         assert len(payload["text"]) < 4000
 
-    def test_SLACK_TEXT_LIMITちょうどはtruncateしない(self):
-        # >= ではなく > 条件の境界。
+    def test_文字数が上限ちょうどのとき切り詰めない(self):
         captured, urlopen = self._capture_payload()
         with patch("check.urllib.request.urlopen", side_effect=urlopen):
             notify_slack("https://webhook", "x" * SLACK_TEXT_LIMIT)
@@ -602,11 +570,6 @@ def _run_main_with_targets(
 
 
 class Testmainのエラー伝播:
-    """個々のユニットテストは戻り値までしか見ないため、main() の errors 積み込みや
-    メッセージ組み立てで detail が欠落しても検知できない。ユーザーが異常に気付ける
-    唯一の経路である Slack payload を起点に保証する。
-    """
-
     def test_plan実行エラーの詳細がSlack_payloadに載る(self):
         result = _run_main_with_plan_result(1, "provider auth failed: 401")
         assert result["called"] is True
@@ -659,11 +622,6 @@ class Testmainのエラー伝播:
 
 
 class Testmainのsuppress適用:
-    """Terraform 側で activation_policy は ignore_changes から外しているので plan には
-    常に差分として載る。dev/stg では targets.yaml の suppress でノイズを消し、prod では
-    suppress なしで通知する、という設計を end-to-end で保証する。
-    """
-
     def test_dev相当でactivation_policy単独差分は差分なし通知になる(self):
         plan_json = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
@@ -679,8 +637,6 @@ class Testmainのsuppress適用:
         assert CLOUDSQL not in result["message"]
 
     def test_prod相当でactivation_policy差分があればSlack通知される(self):
-        # prod の意図しない停止を検知するための要件。検知器側で明示的に suppress 対象から
-        # 外れていることを保証する。
         plan_json = _plan_json(_resource_change(
             "module.database.google_sql_database_instance.main",
             CLOUDSQL,
@@ -726,10 +682,6 @@ class Testmainのsuppress適用:
 
 
 class Testmainの複数対象集約:
-    """main() は複数 target・複数 env をループで処理し 1 通に集約する。単一 target 固定の
-    ヘルパでは集約ロジック (複数ラベルの同時整形・drift とエラーの混在) を検証できない。
-    """
-
     def test_2リポで片方にdrift片方にplanエラーがあるときSlack_payload1通に警告とエラーがまとまる(self):
         targets = [
             {"repo": "r1", "environments": [{"name": "e1", "path": "p"}]},

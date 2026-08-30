@@ -34,11 +34,6 @@ def _subprocess_result(returncode: int, stderr: str = "", stdout: str = "") -> M
 
 
 class Testリソース未存在の判定:
-    """認証失敗 / quota / network / permission denied を NotFound と誤判定すると、
-    実際には権限切れ等でチェックできていないのに silent に「リソース無し」を返し、
-    「コスト発生リソース無し」と誤った安心感を与えるため、これらは NotFound としない。
-    """
-
     @pytest.mark.parametrize(
         ("stderr", "expected"),
         [
@@ -59,7 +54,6 @@ class Testリソース未存在の判定:
                 id="quota 超過はリソース未存在としない",
             ),
             pytest.param("", False, id="空 stderr はリソース未存在としない"),
-            # 404 は \b 単語境界を要求するため "4040" 等の数字列に誤爆しない
             pytest.param("status 4040", False, id="404 を含む 4040 は単語境界で誤爆しない"),
         ],
     )
@@ -81,10 +75,6 @@ class Testリソース未存在の判定:
 
 
 class Testコマンド失敗の整形:
-    """stderr だけ見る実装にすると Claude CLI 等の「stdout にしかエラーを吐く CLI」の
-    失敗原因が完全に消えるため、stderr と stdout の両方を必ず拾う。
-    """
-
     @pytest.mark.parametrize(
         ("stderr", "stdout", "exit_code", "expected"),
         [
@@ -282,11 +272,6 @@ class Testプロジェクト単位の総合チェック:
 
 
 class Test外部コマンド実行ラッパー:
-    """_is_not_found の判定結果を「NotFound → silent skip / それ以外 → 例外で上げる」の分岐に
-    繋げる要所。_is_not_found 単体が正確でも、ここが判定を間違った分岐に繋げたら silent
-    failure になるため、分岐パスを直接固定する。
-    """
-
     def test_exit0のときstdoutをstripして返す(self):
         with patch("resources.subprocess.run", return_value=_subprocess_result(0, stdout="  hello\n")):
             assert _run_cmd(["fake"], label="test") == "hello"
@@ -309,7 +294,6 @@ class Test外部コマンド実行ラッパー:
                 _run_cmd(["fake"], label="test", allow_not_found=True)
 
     def test_allow_not_foundがFalseならNotFound_stderrでも例外にする(self):
-        # 呼び出し側が明示的に許可していない限り、NotFound でも未定義の状態としてエラーで止める。
         with patch("resources.subprocess.run", return_value=_subprocess_result(1, stderr="NOT_FOUND")):
             with pytest.raises(CommandError):
                 _run_cmd(["fake"], label="test", allow_not_found=False)
@@ -391,11 +375,7 @@ class TestSlack通知:
 
 
 class Test各チェックのCommandErrorメッセージ:
-    """既存テストは run_gcloud の return_value を差し替えていて、CommandError 例外パスを
-    通っていない。呼び出し側の except 節の存在と、積まれる文字列の質を直接検証する。
-    """
-
-    def test_check_cloudsqlのCommandErrorは読めるメッセージをerrorsに積む(self):
+    def test_CloudSQLの稼働チェックはgcloudコマンド失敗時にリソース名と元のエラー内容の両方をエラーに積む(self):
         with patch("resources.run_gcloud_value", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_cloudsql("proj")
         assert costs == []
@@ -403,27 +383,24 @@ class Test各チェックのCommandErrorメッセージ:
         assert "Cloud SQL" in errors[0]
         assert "gcloud 実行失敗" in errors[0]
 
-    def test_check_static_ipsのCommandErrorは読めるメッセージをerrorsに積む(self):
+    def test_予約済み外部IPのチェックはgcloudコマンド失敗時にリソース名と元のエラー内容の両方をエラーに積む(self):
         with patch("resources.run_gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_static_ips("proj")
         assert costs == []
         assert len(errors) == 1
         assert "外部 IP" in errors[0]
+        assert "gcloud 実行失敗" in errors[0]
 
-    def test_check_pscのCommandErrorは読めるメッセージをerrorsに積む(self):
+    def test_PSC転送ルールのチェックはgcloudコマンド失敗時にリソース名と元のエラー内容の両方をエラーに積む(self):
         with patch("resources.run_gcloud", side_effect=CommandError("gcloud 実行失敗 (exit 1)")):
             costs, errors = check_psc("proj")
         assert costs == []
         assert len(errors) == 1
         assert "PSC" in errors[0]
+        assert "gcloud 実行失敗" in errors[0]
 
 
 class Testエラーヘッダの組み立て:
-    """Slack に載る短いエラー文（「gcloud 実行失敗 (exit 1)」等）だけでは原因追跡が
-    不可能なため、Actions URL か「URL 取得不可」の明示を必ず含めることで、ユーザーが
-    どこを見ればいいか迷わないようにする。
-    """
-
     def test_Actions_URLが取れる時はSlackリンク形式で埋め込む(self):
         header = _build_error_header(
             "2026-04-17", "https://github.com/org/repo/actions/runs/12345",
@@ -432,11 +409,8 @@ class Testエラーヘッダの組み立て:
         assert "<https://github.com/org/repo/actions/runs/12345|ログ>" in header
 
     def test_URL取得不可の時も動線なしを明示して調査起点を与える(self):
-        # silent に URL を省略するとユーザーは「なぜログ無いのか」分からず調査を諦める。
-        # 必ず「取得不可」と理由を載せて問い合わせの起点になる文言にする。
         header = _build_error_header("2026-04-17", "")
         assert "ログ URL 取得不可" in header
-        # ユーザーが見るべき代替動線（stdout）を明示
         assert "stdout" in header
 
     def test_URL有無に関わらず日付とエラーマーカーは常に含まれる(self):
@@ -486,11 +460,6 @@ def _run_cost_main(env_results: dict[str, tuple[list[str], list[str]]]) -> dict:
 
 
 class Testコスト確認mainの通知:
-    """個々のチェック関数は戻り値までしか見ないため、main() の集約・メッセージ組み立てで
-    内容が欠落しても検知できない。ユーザーが異常に気付ける唯一の経路である Slack payload を
-    起点に保証する。
-    """
-
     def test_SLACK_WEBHOOK_URL未設定のときexit_1で落ちてSlackへは送らない(self):
         with patch.dict(os.environ, {}, clear=True), \
              patch("check.notify_slack") as notify:

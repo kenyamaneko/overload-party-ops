@@ -17,10 +17,6 @@ _spec.loader.exec_module(fetch_schemas)
 
 
 class Testスキーマ名検証:
-    """schemas.lock.yaml から取得したスキーマ名がファイルパスや SQL に到達する前の
-    多重防御の核。パストラバーサル・シェルメタ文字を確実に弾くことを保証する。
-    """
-
     @pytest.mark.parametrize(
         "schema_name",
         [
@@ -50,10 +46,6 @@ class Testスキーマ名検証:
 
 
 class Test単一ファイルのsparse_clone:
-    """subprocess は外部境界としてダブル化する。checkout 成功を模す fake は dest 配下に
-    ファイルを書き、以降のファイル存在チェック分岐を実データで通す。
-    """
-
     def _fake_checkout_writes_file(self, file_path: str):
         """checkout コマンド実行時に dest 配下へ期待ファイルを書く _run の fake を返す。
 
@@ -153,10 +145,6 @@ class Test単一ファイルのsparse_clone:
 
 
 class TestユニオンSQLの結合:
-    """union は下流の psqldef が適用するため、実 DB 適用ではなく構成 (バナーと DDL の
-    包含・順序) を検証する。
-    """
-
     def _fake_clone_sparse(self, sql_by_name: dict[str, str]):
         """スキーマ名ごとの SQL 文字列を返す _clone_sparse の fake を作る。
 
@@ -308,32 +296,41 @@ class Testスキーマ取得mainの入口:
             "--workdir", str(tmp_path / "workdir"),
         ]
 
-    @pytest.mark.parametrize(
-        ("cli_token", "env_vars", "expected_token"),
-        [
-            pytest.param(
-                "TST1", {"GITHUB_TOKEN": "TST2"}, "TST1",
-                id="--token 指定があるとき",
-            ),
-            pytest.param(
-                None, {"GITHUB_TOKEN": "TST2", "DB_MIGRATE_TOKEN": "TST3"}, "TST2",
-                id="--token が無く GITHUB_TOKEN があるとき",
-            ),
-            pytest.param(
-                None, {"DB_MIGRATE_TOKEN": "TST3"}, "TST3",
-                id="GITHUB_TOKEN も無いとき",
-            ),
-        ],
-    )
-    def test_token解決の優先順位(self, tmp_path, monkeypatch, cli_token, env_vars, expected_token):
+    def test_token引数とGITHUB_TOKEN環境変数の両方があるときtoken引数の値がスキーマ取得に使うトークンになる(self, tmp_path, monkeypatch):
         lock_path = self._write_lock(tmp_path)
         grant_src = tmp_path / "grant_iam.sql"
         grant_src.write_text("GRANT SELECT ON t TO r;")
         out_path = tmp_path / "sql" / "schema_union.sql"
 
         argv = self._base_argv(tmp_path, lock_path, out_path, grant_src)
-        if cli_token is not None:
-            argv += ["--token", cli_token]
+        argv += ["--token", "TST1"]
+        monkeypatch.setattr("sys.argv", argv)
+
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "TST2"}, clear=True), \
+             patch("fetch_schemas.fetch_sources", return_value=[]) as fetch_sources:
+            fetch_schemas.main()
+        assert fetch_sources.call_args.args[2] == "TST1"
+
+    @pytest.mark.parametrize(
+        ("env_vars", "expected_token"),
+        [
+            pytest.param(
+                {"GITHUB_TOKEN": "TST2", "DB_MIGRATE_TOKEN": "TST3"}, "TST2",
+                id="GITHUB_TOKEN と DB_MIGRATE_TOKEN の両方があるとき、GITHUB_TOKEN がスキーマ取得に使うトークンになる",
+            ),
+            pytest.param(
+                {"DB_MIGRATE_TOKEN": "TST3"}, "TST3",
+                id="GITHUB_TOKEN が無いとき、DB_MIGRATE_TOKEN がスキーマ取得に使うトークンになる",
+            ),
+        ],
+    )
+    def test_token解決(self, tmp_path, monkeypatch, env_vars, expected_token):
+        lock_path = self._write_lock(tmp_path)
+        grant_src = tmp_path / "grant_iam.sql"
+        grant_src.write_text("GRANT SELECT ON t TO r;")
+        out_path = tmp_path / "sql" / "schema_union.sql"
+
+        argv = self._base_argv(tmp_path, lock_path, out_path, grant_src)
         monkeypatch.setattr("sys.argv", argv)
 
         with patch.dict(os.environ, env_vars, clear=True), \

@@ -10,6 +10,8 @@ import pytest
 
 import slack_notifier as sn
 
+TRUNCATION_BOUNDARY_LENGTH = 40000
+
 
 class TestActions実行URLの組み立て:
     @pytest.mark.parametrize(
@@ -77,14 +79,39 @@ class TestSlackへの送信:
         assert req.full_url == "https://hooks.slack.com/x"
         assert json.loads(req.data.decode()) == {"text": "hello"}
 
-    def test_上限を超えるメッセージは末尾を切り詰めてtruncateマーカーを付けて送る(self):
-        dropped_tail = "TAIL-CONTENT-THAT-MUST-BE-DROPPED"
-        long_msg = "a" * sn.SLACK_TEXT_LIMIT + dropped_tail
+    def test_本文が40000文字ちょうどのとき送信される本文は元のメッセージと一致する(self):
+        message = "a" * TRUNCATION_BOUNDARY_LENGTH
         with patch("slack_notifier.urllib.request.urlopen") as urlopen:
-            sn.post_to_slack("https://hooks.slack.com/x", long_msg)
+            sn.post_to_slack("https://hooks.slack.com/x", message)
         sent = json.loads(urlopen.call_args[0][0].data.decode())["text"]
+        assert sent == message
+
+    def test_本文が40001文字のとき送信される本文は末尾が打ち切りマーカー付きで切り詰められる(self):
+        message = "a" * TRUNCATION_BOUNDARY_LENGTH + "X"
+        with patch("slack_notifier.urllib.request.urlopen") as urlopen:
+            sn.post_to_slack("https://hooks.slack.com/x", message)
+        sent = json.loads(urlopen.call_args[0][0].data.decode())["text"]
+        assert "X" not in sent
         assert sent.endswith("\n…(truncated)")
-        assert dropped_tail not in sent
+
+    def test_送信が失敗したとき呼び出し元プロセスは終了コード1で終了する(self):
+        with patch("slack_notifier.urllib.request.urlopen", side_effect=Exception("DUMMY-FAILURE-CAUSE-XYZ")):
+            with pytest.raises(SystemExit) as exc:
+                sn.post_to_slack("https://hooks.slack.com/x", "hello")
+        assert exc.value.code == 1
+
+    def test_送信が失敗したとき標準エラー出力に固定の案内文が出力される(self, capsys):
+        with patch("slack_notifier.urllib.request.urlopen", side_effect=Exception("DUMMY-FAILURE-CAUSE-XYZ")):
+            with pytest.raises(SystemExit):
+                sn.post_to_slack("https://hooks.slack.com/x", "hello")
+        assert "Slack notification failed" in capsys.readouterr().err
+
+    def test_送信が失敗したとき送信を失敗させた原因の内容が標準エラー出力にそのまま含まれる(self, capsys):
+        dummy_cause = "DUMMY-FAILURE-CAUSE-XYZ"
+        with patch("slack_notifier.urllib.request.urlopen", side_effect=Exception(dummy_cause)):
+            with pytest.raises(SystemExit):
+                sn.post_to_slack("https://hooks.slack.com/x", "hello")
+        assert dummy_cause in capsys.readouterr().err
 
 
 class TestSLACK_WEBHOOK_URLの必須チェック:

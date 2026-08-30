@@ -21,12 +21,12 @@ class TestShopのcard_pack_id抽出:
         path = tmp_path / "products.yaml"
         _write_yaml(path, {
             "products": [
-                {"product_id": "fs_she", "type": "faction_set", "card_pack_id": "faction_set_she"},
+                {"product_id": "fs_she", "type": "faction_set", "card_pack_id": "TST-0002"},
                 {"product_id": "pack_x", "type": "card_pack", "card_pack_id": "limited_x"},
             ],
         })
         assert v.load_shop_card_pack_refs(path) == {
-            "fs_she": "faction_set_she",
+            "fs_she": "TST-0002",
             "pack_x": "limited_x",
         }
 
@@ -41,11 +41,11 @@ class TestShopのcard_pack_id抽出:
         path = tmp_path / "products.yaml"
         _write_yaml(path, {
             "products": [
-                {"product_id": "fs_she", "type": "faction_set", "card_pack_id": "faction_set_she"},
+                {"product_id": "fs_she", "type": "faction_set", "card_pack_id": "TST-0002"},
                 {"product_id": "other", "type": product_type},
             ],
         })
-        assert v.load_shop_card_pack_refs(path) == {"fs_she": "faction_set_she"}
+        assert v.load_shop_card_pack_refs(path) == {"fs_she": "TST-0002"}
 
     @pytest.mark.parametrize(
         "product_type",
@@ -109,11 +109,11 @@ class TestCardPackの一覧抽出:
         path = tmp_path / "card_packs.yaml"
         _write_yaml(path, {
             "packs": [
-                {"pack_id": "basic", "cards": []},
-                {"pack_id": "faction_set_she", "cards": []},
+                {"pack_id": "TST-0001", "cards": []},
+                {"pack_id": "TST-0002", "cards": []},
             ],
         })
-        assert v.load_card_pack_ids(path) == {"basic", "faction_set_she"}
+        assert v.load_card_pack_ids(path) == {"TST-0001", "TST-0002"}
 
     def test_top_levelのpacksキーが無ければValueErrorになる(self, tmp_path: Path):
         path = tmp_path / "card_packs.yaml"
@@ -145,20 +145,20 @@ class Test欠落参照の検出:
         ("shop_refs", "card_ids", "expected"),
         [
             pytest.param(
-                {"fs_she": "faction_set_she"},
-                {"basic", "faction_set_she"},
+                {"fs_she": "TST-0002"},
+                {"TST-0001", "TST-0002"},
                 [],
                 id="全参照が存在するとき、空リストになる",
             ),
             pytest.param(
                 {"fs_ghost": "faction_set_ghost"},
-                {"basic"},
+                {"TST-0001"},
                 [("fs_ghost", "faction_set_ghost")],
                 id="欠落が1件のとき、product_id 付きで報告される",
             ),
             pytest.param(
-                {"z": "z_pack", "a": "a_pack", "ok": "basic"},
-                {"basic"},
+                {"z": "z_pack", "a": "a_pack", "ok": "TST-0001"},
+                {"TST-0001"},
                 [("a", "a_pack"), ("z", "z_pack")],
                 id="欠落が複数件のとき、product_id で整列して報告される",
             ),
@@ -189,8 +189,7 @@ class Test失敗通知の整形:
         )
         assert "<https://github.com/org/repo/actions/runs/1|GitHub Actions ログ>" in msg
 
-    def test_run_urlが空ならURL行を出さない(self):
-        # 空 run_url はローカル実行を意味するため URL 行を出さない。
+    def test_ローカル実行のときURL行を出さない(self):
         msg = v._format_failure_message([("p", "q")], "2026-06-20", run_url="")
         assert "GitHub Actions ログ" not in msg
 
@@ -214,8 +213,8 @@ class TestCLIの終了コードとSlack通知:
     def test_全参照が有効ならexit0で成功メッセージをSlackに送る(self, tmp_path: Path, capsys, monkeypatch):
         shop, card = self._write_pair(
             tmp_path,
-            [{"product_id": "fs_she", "type": "faction_set", "card_pack_id": "faction_set_she"}],
-            [{"pack_id": "faction_set_she", "cards": []}],
+            [{"product_id": "fs_she", "type": "faction_set", "card_pack_id": "TST-0002"}],
+            [{"pack_id": "TST-0002", "cards": []}],
         )
         monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
         with patch.dict(os.environ, {"SLACK_WEBHOOK_URL": "https://hooks.slack.com/x"}, clear=True), \
@@ -231,7 +230,7 @@ class TestCLIの終了コードとSlack通知:
         shop, card = self._write_pair(
             tmp_path,
             [{"product_id": "fs_ghost", "type": "faction_set", "card_pack_id": "faction_set_ghost"}],
-            [{"pack_id": "basic", "cards": []}],
+            [{"pack_id": "TST-0001", "cards": []}],
         )
         monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
         with patch.dict(os.environ, {"SLACK_WEBHOOK_URL": "https://hooks.slack.com/x"}, clear=True), \
@@ -244,11 +243,10 @@ class TestCLIの終了コードとSlack通知:
         assert "faction_set_ghost" in msg
 
     def test_SLACK_WEBHOOK_URL未設定は通知経路が無い異常としてexit1で落とす(self, tmp_path: Path, capsys, monkeypatch):
-        # 他 Slack ジョブと同じく、通知経路の欠如は silent skip せず exit 1 で落とす。
         shop, card = self._write_pair(
             tmp_path,
-            [{"product_id": "fs_she", "type": "faction_set", "card_pack_id": "faction_set_she"}],
-            [{"pack_id": "faction_set_she", "cards": []}],
+            [{"product_id": "fs_she", "type": "faction_set", "card_pack_id": "TST-0002"}],
+            [{"pack_id": "TST-0002", "cards": []}],
         )
         monkeypatch.setattr("sys.argv", ["c", "--shop-yaml", str(shop), "--card-yaml", str(card)])
         with patch.dict(os.environ, {}, clear=True), patch("slack_notifier.post_to_slack") as slack:
