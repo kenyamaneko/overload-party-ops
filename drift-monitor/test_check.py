@@ -469,7 +469,7 @@ class TestSlack通知のtruncate:
         assert "…(truncated)" in payload["text"]
         assert len(payload["text"]) < 4000
 
-    def test_文字数が上限ちょうどのときtruncateしない(self):
+    def test_文字数が上限ちょうどのとき切り詰めない(self):
         captured, urlopen = self._capture_payload()
         with patch("check.urllib.request.urlopen", side_effect=urlopen):
             notify_slack("https://webhook", "x" * SLACK_TEXT_LIMIT)

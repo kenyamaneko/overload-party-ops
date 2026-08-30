@@ -296,7 +296,7 @@ class Testスキーマ取得mainの入口:
             "--workdir", str(tmp_path / "workdir"),
         ]
 
-    def test_token引数を指定したときスキーマ取得に使うトークンになる(self, tmp_path, monkeypatch):
+    def test_token引数とGITHUB_TOKEN環境変数の両方があるときtoken引数の値がスキーマ取得に使うトークンになる(self, tmp_path, monkeypatch):
         lock_path = self._write_lock(tmp_path)
         grant_src = tmp_path / "grant_iam.sql"
         grant_src.write_text("GRANT SELECT ON t TO r;")
@@ -324,7 +324,7 @@ class Testスキーマ取得mainの入口:
             ),
         ],
     )
-    def test_token引数を指定しないとき環境変数からスキーマ取得に使うトークンを解決する(self, tmp_path, monkeypatch, env_vars, expected_token):
+    def test_token解決(self, tmp_path, monkeypatch, env_vars, expected_token):
         lock_path = self._write_lock(tmp_path)
         grant_src = tmp_path / "grant_iam.sql"
         grant_src.write_text("GRANT SELECT ON t TO r;")

@@ -86,7 +86,7 @@ class TestSlackへの送信:
         sent = json.loads(urlopen.call_args[0][0].data.decode())["text"]
         assert sent == message
 
-    def test_本文が40001文字のとき送信される本文は切り詰められる(self):
+    def test_本文が40001文字のとき送信される本文は末尾が打ち切りマーカー付きで切り詰められる(self):
         message = "a" * TRUNCATION_BOUNDARY_LENGTH + "X"
         with patch("slack_notifier.urllib.request.urlopen") as urlopen:
             sn.post_to_slack("https://hooks.slack.com/x", message)
@@ -100,7 +100,7 @@ class TestSlackへの送信:
                 sn.post_to_slack("https://hooks.slack.com/x", "hello")
         assert exc.value.code == 1
 
-    def test_送信が失敗したとき標準エラー出力にSlack_notification_failedという文字列が出力される(self, capsys):
+    def test_送信が失敗したとき標準エラー出力に固定の案内文が出力される(self, capsys):
         with patch("slack_notifier.urllib.request.urlopen", side_effect=Exception("DUMMY-FAILURE-CAUSE-XYZ")):
             with pytest.raises(SystemExit):
                 sn.post_to_slack("https://hooks.slack.com/x", "hello")
